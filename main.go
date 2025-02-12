@@ -8,6 +8,8 @@ import (
 	"time"
 
 	mimc_bw6_761 "github.com/consensys/gnark-crypto/ecc/bw6-761/fr/mimc"
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 
 	// Gnark + gnark-crypto
 	"github.com/consensys/gnark-crypto/ecc"
@@ -308,6 +310,20 @@ func (c *CircuitTxMulti) Define(api frontend.API) error {
 	newEnergySum := api.Add(c.NewEnergy[0], c.NewEnergy[1])
 	api.AssertIsEqual(oldEnergySum, newEnergySum)
 
+	// EXTRA: Encryption check
+
+	//(G^r)^b == EncKey
+	G_r_b := new(sw_bls12377.G1Affine)
+	G_r_b.ScalarMul(api, c.G_b, c.R)
+	api.AssertIsEqual(c.EncKey.X, G_r_b.X)
+	api.AssertIsEqual(c.EncKey.Y, G_r_b.Y)
+
+	//(G^r) == G_r
+	G_r := new(sw_bls12377.G1Affine)
+	G_r.ScalarMul(api, c.G, c.R)
+	api.AssertIsEqual(c.G_r.X, G_r.X)
+	api.AssertIsEqual(c.G_r.Y, G_r.Y)
+
 	return nil
 }
 
@@ -484,7 +500,9 @@ type TxProverInputHighLevel struct {
 	EncKey   bls12377.G1Affine
 	R        []byte
 	//B        []byte
-	G bls12377.G1Affine
+	G   bls12377.G1Affine
+	G_b bls12377.G1Affine
+	G_r bls12377.G1Affine
 }
 
 // Transaction => alg.1
@@ -508,10 +526,6 @@ func Transaction(inp TxProverInputHighLevel) TxResult {
 		cm := commitSimu(inp.NewVals[j].Coins, inp.NewVals[j].Energy,
 			rhoNew[j], randNew[j])
 		cmNew[j] = cm
-		// "encrypt"
-		// encVal := buildEncMimcSimu(inp.NewPk[j],
-		// 	inp.NewVals[j].Coins, inp.NewVals[j].Energy,
-		// 	rhoNew[j], randNew[j], cm)
 		encVal := buildEncMimc(inp.EncKey, inp.NewPk[j],
 			inp.NewVals[j].Coins, inp.NewVals[j].Energy,
 			rhoNew[j], randNew[j], cm)
@@ -521,46 +535,36 @@ func Transaction(inp TxProverInputHighLevel) TxResult {
 		pk_enc_bytes := make([]byte, len(pk_enc))
 		copy(pk_enc_bytes, pk_enc[:])
 		cNew[j].PkOwner = pk_enc_bytes
-		//cNew[j][0] = pk_enc_bytes
 
 		//get coins_enc
 		coins_enc := encVal[1].Bytes()
 		coins_enc_bytes := make([]byte, len(coins_enc))
 		copy(coins_enc_bytes, coins_enc[:])
 		cNew[j].Value.Coins = new(big.Int).SetBytes(coins_enc_bytes)
-		// cNew[j][1] = coins_enc_bytes
 
 		//get energy_enc
 		energy_enc := encVal[2].Bytes()
 		energy_enc_bytes := make([]byte, len(energy_enc))
 		copy(energy_enc_bytes, energy_enc[:])
 		cNew[j].Value.Energy = new(big.Int).SetBytes(energy_enc_bytes)
-		//cNew[j][2] = energy_enc_bytes
 
 		//get rho_enc
 		rho_enc := encVal[3].Bytes()
 		rho_enc_bytes := make([]byte, len(rho_enc))
 		copy(rho_enc_bytes, rho_enc[:])
 		cNew[j].Rho = rho_enc_bytes
-		// cNew[j][3] = rho_enc_bytes
 
 		//get rand_enc
 		rand_enc := encVal[4].Bytes()
 		rand_enc_bytes := make([]byte, len(rand_enc))
 		copy(rand_enc_bytes, rand_enc[:])
 		cNew[j].Rand = rand_enc_bytes
-		// cNew[j][4] = rand_enc_bytes
 
 		//get cm_enc
 		cm_enc := encVal[5].Bytes()
 		cm_enc_bytes := make([]byte, len(cm_enc))
 		copy(cm_enc_bytes, cm_enc[:])
 		cNew[j].Cm = cm_enc_bytes
-		// cNew[j][5] = cm_enc_bytes
-
-		// fmt.Println("pk_enc_bytes =", pk_enc_bytes)
-		// //example
-		// cNew[j] = pk_enc_bytes
 	}
 
 	// 3) Construire InputProver
@@ -582,7 +586,6 @@ func Transaction(inp TxProverInputHighLevel) TxResult {
 		ip.NewEnergy[j] = inp.NewVals[j].Energy
 		ip.CmNew[j] = cmNew[j]
 
-		////
 		//pk
 
 		//allocate with make
@@ -590,15 +593,9 @@ func Transaction(inp TxProverInputHighLevel) TxResult {
 		ip.CNew[j][0] = cNew[j].PkOwner
 
 		//coins
-		// coins_bytes := cNew[j].Value.Coins.Bytes()
-		// ip.CNew[j][1] = make([]byte, len(coins_bytes))
-		// copy(ip.CNew[j][1], coins_bytes[:])
 		ip.CNew[j][1] = cNew[j].Value.Coins.Bytes()
 
 		//energy
-		// energy_bytes := cNew[j].Value.Energy.Bytes()
-		// ip.CNew[j][2] = make([]byte, len(energy_bytes))
-		// copy(ip.CNew[j][2], energy_bytes[:])
 		ip.CNew[j][2] = cNew[j].Value.Energy.Bytes()
 
 		//rho
@@ -610,8 +607,6 @@ func Transaction(inp TxProverInputHighLevel) TxResult {
 		//cm
 		ip.CNew[j][5] = cNew[j].Cm
 
-		////
-
 		ip.PkNew[j] = new(big.Int).SetBytes(inp.NewPk[j])
 		ip.RhoNew[j] = rhoNew[j]
 		ip.RandNew[j] = randNew[j]
@@ -620,18 +615,19 @@ func Transaction(inp TxProverInputHighLevel) TxResult {
 	ip.R = inp.R
 	//ip.B = inp.B
 	ip.G = inp.G
+	ip.G_b = inp.G_b
+	ip.G_r = inp.G_r
 	ip.EncKey = inp.EncKey
 
 	wc, _ := ip.BuildWitness()
 	w, _ := frontend.NewWitness(wc, ecc.BW6_761.ScalarField())
 
 	// 4) Génération de preuve
-	start := time.Now()
+	_ = time.Now()
 	proof, err := groth16.Prove(globalCCS, globalPK, w)
 	if err != nil {
 		panic(err)
 	}
-	fmt.Println("Proving took:", time.Since(start))
 
 	var buf bytes.Buffer
 	proof.WriteTo(&buf)
@@ -639,7 +635,6 @@ func Transaction(inp TxProverInputHighLevel) TxResult {
 	return TxResult{
 		SnOld: snOld,
 		CmNew: cmNew,
-		// CNew:  cNew,
 		CNew:  [2]Note{cNew[0], cNew[1]},
 		Proof: buf.Bytes(),
 
@@ -688,8 +683,6 @@ func ValidateTx(tx TxResult,
 		ip.NewEnergy[j] = newVal[j].Energy
 		ip.CmNew[j] = tx.CmNew[j]
 
-		//ip.CNew[j] = tx.CNew[j]
-		//allocate with make
 		ip.CNew[j] = make([][]byte, 6)
 		ip.CNew[j][0] = tx.CNew[j].PkOwner
 		ip.CNew[j][1] = tx.CNew[j].Value.Coins.Bytes()
@@ -703,13 +696,9 @@ func ValidateTx(tx TxResult,
 		ip.RandNew[j] = tx.RandNew[j]
 	}
 
-	///
-
 	ip.G = G
 	ip.G_b = G_b
 	ip.G_r = G_r
-
-	///
 
 	wc, _ := ip.BuildWitness()
 	pubOnly, _ := frontend.NewWitness(wc, ecc.BW6_761.ScalarField(), frontend.PublicOnly())
@@ -761,14 +750,14 @@ func loadOrGenerateKeys() {
 		var buf bytes.Buffer
 		ccs.WriteTo(&buf)
 		os.WriteFile(cssFile, buf.Bytes(), 0644)
-		//fmt.Println("Circuit compiled =>", cssFile)
 		globalCCS = ccs
 	}
 	// 2) Charger ou générer pk+vk
 	pkFile := "_run/zk_pk"
 	vkFile := "_run/zk_vk"
 	if fileExists(pkFile) && fileExists(vkFile) {
-		fmt.Println("Loading pk & vk from =>", pkFile, vkFile)
+
+		log.Info().Str("vkFile", vkFile).Str("pkFile", pkFile).Msg("Loading keys from disk")
 		pkData, _ := os.ReadFile(pkFile)
 		vkData, _ := os.ReadFile(vkFile)
 
@@ -784,9 +773,9 @@ func loadOrGenerateKeys() {
 		}
 		globalPK = pk
 		globalVK = vk
-		fmt.Println("ProvingKey & VerifyingKey loaded from disk.")
 	} else {
-		fmt.Println("Generating pk, vk =>", pkFile, vkFile)
+		log.Info().Str("vkFile", vkFile).Str("pkFile", pkFile).Msg("Generating keys")
+		//fmt.Println("Generating pk, vk =>", pkFile, vkFile)
 		pk, vk, err := groth16.Setup(globalCCS)
 		if err != nil {
 			panic(err)
@@ -797,7 +786,6 @@ func loadOrGenerateKeys() {
 		var bufVK bytes.Buffer
 		vk.WriteTo(&bufVK)
 		os.WriteFile(vkFile, bufVK.Bytes(), 0644)
-		fmt.Println("PK & VK generated =>", pkFile, vkFile)
 
 		globalPK = pk
 		globalVK = vk
@@ -816,6 +804,11 @@ func fileExists(fname string) bool {
 // -----------------------------------------------------------------------------
 
 func main() {
+
+	//config
+	zerolog.TimeFieldFormat = "15:04:05" // Format d'heure sans date
+	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stdout, TimeFormat: "15:04:05"})
+
 	// 1) Charger ou générer (CCS, pk, vk)
 	loadOrGenerateKeys()
 
@@ -892,28 +885,37 @@ func main() {
 		EncKey:   *G_r_b_prover,
 		R:        r_bytes[:],
 		//B:        b_bytes[:],
-		G: G1,
+		G:   G1,
+		G_b: *G_b,
+		G_r: *G_r,
 	}
 
 	// 4) Transaction => generation
 	tx := Transaction(inp)
 
-	fmt.Println("\n--- Transaction done ---")
+	////////////////
+
+	// Configuration du logger
+	//log.Info().Int("Transaction done", nbConstraints).Msg("Transaction done")
+
+	////////////////
+
+	log.Info().Int("proofLen", len(tx.Proof)).Msg("Transaction done")
 	// fmt.Printf("SnOld[0] = %x\n", tx.SnOld[0])
 	// fmt.Printf("SnOld[1] = %x\n", tx.SnOld[1])
 	// fmt.Printf("CmNew[0] = %x\n", tx.CmNew[0])
 	// fmt.Printf("CmNew[1] = %x\n", tx.CmNew[1])
 	// fmt.Printf("CNew[0]  = %x\n", tx.CNew[0])
 	// fmt.Printf("CNew[1]  = %x\n", tx.CNew[1])
-	fmt.Println("Proof len =", len(tx.Proof))
 
 	// 5) Validation => doit renvoyer true
-	ok := ValidateTx(tx,
+	_ = ValidateTx(tx,
 		[2]Note{old1, old2},
 		[2]Gamma{new1, new2},
 		G1,
 		*G_b,
 		*G_r,
 	)
-	fmt.Println("Validation =>", ok)
+	//log.Info().Int("proofLen", len(tx.Proof)).Msg("Transaction done")
+	//fmt.Println("Validation =>", ok)
 }
