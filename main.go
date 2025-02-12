@@ -250,9 +250,11 @@ type CircuitTxMulti struct {
 
 	////
 
-	R      frontend.Variable
-	B      frontend.Variable
-	G      sw_bls12377.G1Affine
+	R frontend.Variable
+	//B      frontend.Variable
+	G      sw_bls12377.G1Affine `gnark:",public"`
+	G_b    sw_bls12377.G1Affine `gnark:",public"`
+	G_r    sw_bls12377.G1Affine `gnark:",public"`
 	EncKey sw_bls12377.G1Affine
 
 	////
@@ -318,16 +320,16 @@ func PRF(api frontend.API, sk, rho frontend.Variable) frontend.Variable {
 }
 
 // fakeEncZK => MiMC(pk, coins, energy, rho, rand, cm)
-func fakeEncZK(api frontend.API, pk, coins, energy, rho, rand, cm frontend.Variable) frontend.Variable {
-	h, _ := mimc.NewMiMC(api)
-	h.Write(pk)
-	h.Write(coins)
-	h.Write(energy)
-	h.Write(rho)
-	h.Write(rand)
-	h.Write(cm)
-	return h.Sum()
-}
+// func fakeEncZK(api frontend.API, pk, coins, energy, rho, rand, cm frontend.Variable) frontend.Variable {
+// 	h, _ := mimc.NewMiMC(api)
+// 	h.Write(pk)
+// 	h.Write(coins)
+// 	h.Write(energy)
+// 	h.Write(rho)
+// 	h.Write(rand)
+// 	h.Write(cm)
+// 	return h.Sum()
+// }
 
 //func buildEncMimc(pk []byte, coins, energy, rho, rand *big.Int, cm []byte) []byte {
 
@@ -398,9 +400,11 @@ type InputProver struct {
 	CNew      [2][][]byte
 
 	///
-	R      []byte
-	B      []byte
+	R []byte
+	//B      []byte
 	G      bls12377.G1Affine
+	G_b    bls12377.G1Affine
+	G_r    bls12377.G1Affine
 	EncKey bls12377.G1Affine
 
 	///
@@ -438,15 +442,16 @@ func (inp *InputProver) BuildWitness() (frontend.Circuit, error) {
 			c.CNew[j][k] = inp.CNew[j][k]
 		}
 
-		fmt.Println("inp.CNew[j] = ", inp.CNew[j])
 		c.PkNew[j] = inp.PkNew[j]
 		c.RhoNew[j] = inp.RhoNew[j]
 		c.RandNew[j] = inp.RandNew[j]
 	}
 
 	c.R = new(big.Int).SetBytes(inp.R)
-	c.B = new(big.Int).SetBytes(inp.B)
+	//c.B = new(big.Int).SetBytes(inp.B)
 	c.G = sw_bls12377.NewG1Affine(inp.G)
+	c.G_b = sw_bls12377.NewG1Affine(inp.G_b)
+	c.G_r = sw_bls12377.NewG1Affine(inp.G_r)
 	c.EncKey = sw_bls12377.NewG1Affine(inp.EncKey)
 
 	return &c, nil
@@ -478,8 +483,8 @@ type TxProverInputHighLevel struct {
 	NewPk    [2][]byte
 	EncKey   bls12377.G1Affine
 	R        []byte
-	B        []byte
-	G        bls12377.G1Affine
+	//B        []byte
+	G bls12377.G1Affine
 }
 
 // Transaction => alg.1
@@ -613,7 +618,7 @@ func Transaction(inp TxProverInputHighLevel) TxResult {
 	}
 
 	ip.R = inp.R
-	ip.B = inp.B
+	//ip.B = inp.B
 	ip.G = inp.G
 	ip.EncKey = inp.EncKey
 
@@ -660,6 +665,9 @@ func Transaction(inp TxProverInputHighLevel) TxResult {
 func ValidateTx(tx TxResult,
 	old [2]Note,
 	newVal [2]Gamma,
+	G bls12377.G1Affine,
+	G_b bls12377.G1Affine,
+	G_r bls12377.G1Affine,
 ) bool {
 
 	var ip InputProver
@@ -694,6 +702,14 @@ func ValidateTx(tx TxResult,
 		ip.RhoNew[j] = tx.RhoNew[j]
 		ip.RandNew[j] = tx.RandNew[j]
 	}
+
+	///
+
+	ip.G = G
+	ip.G_b = G_b
+	ip.G_r = G_r
+
+	///
 
 	wc, _ := ip.BuildWitness()
 	pubOnly, _ := frontend.NewWitness(wc, ecc.BW6_761.ScalarField(), frontend.PublicOnly())
@@ -737,7 +753,7 @@ func loadOrGenerateKeys() {
 		fmt.Println("Circuit loaded from", cssFile)
 		globalCCS = ccs
 	} else {
-		fmt.Println("Compiling circuit =>", cssFile)
+		//fmt.Println("Compiling circuit =>", cssFile)
 		ccs, err := frontend.Compile(ecc.BW6_761.ScalarField(), r1cs.NewBuilder, &c)
 		if err != nil {
 			panic(err)
@@ -745,7 +761,7 @@ func loadOrGenerateKeys() {
 		var buf bytes.Buffer
 		ccs.WriteTo(&buf)
 		os.WriteFile(cssFile, buf.Bytes(), 0644)
-		fmt.Println("Circuit compiled =>", cssFile)
+		//fmt.Println("Circuit compiled =>", cssFile)
 		globalCCS = ccs
 	}
 	// 2) Charger ou générer pk+vk
@@ -875,26 +891,29 @@ func main() {
 		NewPk:    [2][]byte{pkNew1, pkNew2},
 		EncKey:   *G_r_b_prover,
 		R:        r_bytes[:],
-		B:        b_bytes[:],
-		G:        G1,
+		//B:        b_bytes[:],
+		G: G1,
 	}
 
 	// 4) Transaction => generation
 	tx := Transaction(inp)
 
 	fmt.Println("\n--- Transaction done ---")
-	fmt.Printf("SnOld[0] = %x\n", tx.SnOld[0])
-	fmt.Printf("SnOld[1] = %x\n", tx.SnOld[1])
-	fmt.Printf("CmNew[0] = %x\n", tx.CmNew[0])
-	fmt.Printf("CmNew[1] = %x\n", tx.CmNew[1])
-	fmt.Printf("CNew[0]  = %x\n", tx.CNew[0])
-	fmt.Printf("CNew[1]  = %x\n", tx.CNew[1])
+	// fmt.Printf("SnOld[0] = %x\n", tx.SnOld[0])
+	// fmt.Printf("SnOld[1] = %x\n", tx.SnOld[1])
+	// fmt.Printf("CmNew[0] = %x\n", tx.CmNew[0])
+	// fmt.Printf("CmNew[1] = %x\n", tx.CmNew[1])
+	// fmt.Printf("CNew[0]  = %x\n", tx.CNew[0])
+	// fmt.Printf("CNew[1]  = %x\n", tx.CNew[1])
 	fmt.Println("Proof len =", len(tx.Proof))
 
 	// 5) Validation => doit renvoyer true
 	ok := ValidateTx(tx,
 		[2]Note{old1, old2},
 		[2]Gamma{new1, new2},
+		G1,
+		*G_b,
+		*G_r,
 	)
 	fmt.Println("Validation =>", ok)
 }
