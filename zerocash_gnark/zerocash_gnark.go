@@ -715,68 +715,73 @@ var (
 	globalVK  groth16.VerifyingKey
 )
 
-func LoadOrGenerateKeys() {
-	if _, err := os.Stat("_run"); os.IsNotExist(err) {
-		os.Mkdir("_run", 0755)
-	}
-	// 1) Charger/Compiler circuit
-	cssFile := "_run/css"
-	var c CircuitTxMulti
-	if _, err := os.Stat(cssFile); err == nil {
-		d, _ := os.ReadFile(cssFile)
-		ccs := groth16.NewCS(ecc.BW6_761)
-		ccs.ReadFrom(bytes.NewReader(d))
-		fmt.Println("Circuit loaded from", cssFile)
-		globalCCS = ccs
-	} else {
-		//fmt.Println("Compiling circuit =>", cssFile)
-		ccs, err := frontend.Compile(ecc.BW6_761.ScalarField(), r1cs.NewBuilder, &c)
-		if err != nil {
-			panic(err)
-		}
-		var buf bytes.Buffer
-		ccs.WriteTo(&buf)
-		os.WriteFile(cssFile, buf.Bytes(), 0644)
-		globalCCS = ccs
-	}
-	// 2) Charger ou générer pk+vk
-	pkFile := "_run/zk_pk"
-	vkFile := "_run/zk_vk"
-	if fileExists(pkFile) && fileExists(vkFile) {
+func LoadOrGenerateKeys(circuit_type string) {
 
-		log.Info().Str("vkFile", vkFile).Str("pkFile", pkFile).Msg("Loading keys from disk")
-		pkData, _ := os.ReadFile(pkFile)
-		vkData, _ := os.ReadFile(vkFile)
+	switch circuit_type {
+	case "default":
+		if _, err := os.Stat("_run_default"); os.IsNotExist(err) {
+			os.Mkdir("_run_default", 0755)
+		}
+		// 1) Charger/Compiler circuit
+		cssFile := "_run_default/css"
+		var c CircuitTxMulti
+		if _, err := os.Stat(cssFile); err == nil {
+			d, _ := os.ReadFile(cssFile)
+			ccs := groth16.NewCS(ecc.BW6_761)
+			ccs.ReadFrom(bytes.NewReader(d))
+			fmt.Println("Circuit loaded from", cssFile)
+			globalCCS = ccs
+		} else {
+			//fmt.Println("Compiling circuit =>", cssFile)
+			ccs, err := frontend.Compile(ecc.BW6_761.ScalarField(), r1cs.NewBuilder, &c)
+			if err != nil {
+				panic(err)
+			}
+			var buf bytes.Buffer
+			ccs.WriteTo(&buf)
+			os.WriteFile(cssFile, buf.Bytes(), 0644)
+			globalCCS = ccs
+		}
+		// 2) Charger ou générer pk+vk
+		pkFile := "_run_default/zk_pk"
+		vkFile := "_run_default/zk_vk"
+		if fileExists(pkFile) && fileExists(vkFile) {
 
-		pk := groth16.NewProvingKey(ecc.BW6_761)
-		vk := groth16.NewVerifyingKey(ecc.BW6_761)
-		_, err := pk.ReadFrom(bytes.NewReader(pkData))
-		if err != nil {
-			panic(err)
-		}
-		_, err = vk.ReadFrom(bytes.NewReader(vkData))
-		if err != nil {
-			panic(err)
-		}
-		globalPK = pk
-		globalVK = vk
-	} else {
-		log.Info().Str("vkFile", vkFile).Str("pkFile", pkFile).Msg("Generating keys")
-		//fmt.Println("Generating pk, vk =>", pkFile, vkFile)
-		pk, vk, err := groth16.Setup(globalCCS)
-		if err != nil {
-			panic(err)
-		}
-		var bufPK bytes.Buffer
-		pk.WriteTo(&bufPK)
-		os.WriteFile(pkFile, bufPK.Bytes(), 0644)
-		var bufVK bytes.Buffer
-		vk.WriteTo(&bufVK)
-		os.WriteFile(vkFile, bufVK.Bytes(), 0644)
+			log.Info().Str("vkFile", vkFile).Str("pkFile", pkFile).Msg("Loading keys from disk")
+			pkData, _ := os.ReadFile(pkFile)
+			vkData, _ := os.ReadFile(vkFile)
 
-		globalPK = pk
-		globalVK = vk
+			pk := groth16.NewProvingKey(ecc.BW6_761)
+			vk := groth16.NewVerifyingKey(ecc.BW6_761)
+			_, err := pk.ReadFrom(bytes.NewReader(pkData))
+			if err != nil {
+				panic(err)
+			}
+			_, err = vk.ReadFrom(bytes.NewReader(vkData))
+			if err != nil {
+				panic(err)
+			}
+			globalPK = pk
+			globalVK = vk
+		} else {
+			log.Info().Str("vkFile", vkFile).Str("pkFile", pkFile).Msg("Generating keys")
+			//fmt.Println("Generating pk, vk =>", pkFile, vkFile)
+			pk, vk, err := groth16.Setup(globalCCS)
+			if err != nil {
+				panic(err)
+			}
+			var bufPK bytes.Buffer
+			pk.WriteTo(&bufPK)
+			os.WriteFile(pkFile, bufPK.Bytes(), 0644)
+			var bufVK bytes.Buffer
+			vk.WriteTo(&bufVK)
+			os.WriteFile(vkFile, bufVK.Bytes(), 0644)
+
+			globalPK = pk
+			globalVK = vk
+		}
 	}
+
 }
 
 func fileExists(fname string) bool {

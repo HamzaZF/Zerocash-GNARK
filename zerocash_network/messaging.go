@@ -20,5 +20,8 @@ func ReceiveMessage(conn net.Conn, out interface{}) error {
 func init() {
 	//gob.Register(ProofPackage{})
 	gob.Register(Message{})
+	gob.Register(Point{})
+	gob.Register(DHPayload{})
+	gob.Register(DHParams{})
 	// Vous pouvez enregistrer d'autres types personnalisés ici si nécessaire.
 }

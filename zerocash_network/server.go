@@ -3,10 +3,13 @@ package zerocash_network
 
 import (
 	"fmt"
+	"math/big"
 	"net"
 	"os"
 	"sync"
+	zg "zerocash_gnark/zerocash_gnark"
 
+	bls12377 "github.com/consensys/gnark-crypto/ecc/bls12-377"
 	"github.com/consensys/gnark/backend/groth16"
 	"github.com/rs/zerolog"
 )
@@ -65,6 +68,11 @@ func handleConnection(conn net.Conn) {
 	manager.AddClient(conn)
 	defer manager.RemoveClient(conn)
 
+	//G1
+	var G1 bls12377.G1Affine
+	var G_r bls12377.G1Affine
+	var G_r_b bls12377.G1Affine
+
 	for {
 		var msg Message
 		if err := ReceiveMessage(conn, &msg); err != nil {
@@ -114,6 +122,48 @@ func handleConnection(conn net.Conn) {
 			// } else {
 			// 	fmt.Printf("[ERREUR] Le payload pour le type proof n'est pas de type ProofPackage\n")
 			// }
+		case "DiffieHellman":
+			point, ok := msg.Payload.(Point)
+			if ok {
+				if point.Type == "DH_G1" {
+					G1 = point.Payload
+					fmt.Printf("[REÇU] G1 reçu de %s:\n", conn.RemoteAddr())
+					fmt.Printf("       G1: %+v\n", G1)
+				} else if point.Type == "DH_G_r" {
+					G_r = point.Payload
+					fmt.Printf("[REÇU] G_r reçu de %s:\n", conn.RemoteAddr())
+					fmt.Printf("       G_r: %+v\n", G_r)
+
+					//compute G_b
+
+					b, _ := zg.GenerateBls12377_frElement()
+					b_bytes := b.Bytes()
+
+					G_b := new(bls12377.G1Affine).ScalarMultiplication(&G1, new(big.Int).SetBytes(b_bytes[:]))
+
+					//send G_b
+					response := Message{
+						Type: "DiffieHellman",
+						Payload: Point{
+							Type:    "DH_G_b",
+							Payload: *G_b,
+						},
+					}
+					if err := SendMessage(conn, response); err != nil {
+						fmt.Printf("[ERREUR] Erreur lors de l'envoi de la réponse à %s: %v\n", conn.RemoteAddr(), err)
+					}
+
+					//compute G_r_b
+					G_r_b = *new(bls12377.G1Affine).ScalarMultiplication(&G_r, new(big.Int).SetBytes(b_bytes[:]))
+
+					fmt.Println("G_r_b = ", G_r_b)
+
+				} else {
+					fmt.Printf("[ERREUR] Le type de point n'est pas reconnu\n")
+				}
+			} else {
+				fmt.Printf("[ERREUR] Le payload n'est pas reconnu\n")
+			}
 		default:
 			fmt.Printf("[REÇU] De %s : Type=%s, Payload: %+v\n", conn.RemoteAddr(), msg.Type, msg.Payload)
 		}
@@ -129,24 +179,18 @@ func handleConnection(conn net.Conn) {
 	}
 }
 
-func ServerMain() {
-	// Configuration d'un logger pour le serveur.
+func ServerMain(port string) {
+	// Configuration du logger pour le serveur.
 	logger := zerolog.New(os.Stdout).With().Timestamp().Logger()
 	logger.Info().Msg("Démarrage du serveur...")
 
-	// // Chargement du circuit et de la clé de vérification avant de démarrer le serveur.
-	// logger.Info().Msg("Chargement du circuit pour le serveur...")
-	// ccs := LoadCircuit(logger)
-	// logger.Info().Msg("Chargement de la clé de vérification zkSNARK...")
-	// verifyingKey = LoadZkVerifyKey(logger, ccs)
-	// logger.Info().Msg("Clé de vérification chargée avec succès.")
-
-	ln, err := net.Listen("tcp", ":9000")
+	// On écoute sur le port spécifié (on préfixe par ":" si nécessaire)
+	ln, err := net.Listen("tcp", ":"+port)
 	if err != nil {
 		fmt.Println("Erreur lors de l'écoute :", err)
 		os.Exit(1)
 	}
-	fmt.Println("Serveur démarré sur le port 9000")
+	fmt.Printf("Serveur démarré sur le port %s\n", port)
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
