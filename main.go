@@ -25,7 +25,7 @@ import (
 )
 
 // -------------------------------
-// Configuration du logging (sortie lisible)
+// Logging configuration (readable output)
 // -------------------------------
 var consoleWriter = zerolog.ConsoleWriter{
 	Out:        os.Stdout,
@@ -44,18 +44,31 @@ var consoleWriter = zerolog.ConsoleWriter{
 	},
 }
 
+// getNodeColor returns an ANSI color code based on the node's ID.
+func getNodeColor(id int) string {
+	colors := []string{
+		"\033[31m", // red
+		"\033[32m", // green
+		"\033[33m", // yellow
+		"\033[34m", // blue
+		"\033[35m", // magenta
+		"\033[36m", // cyan
+	}
+	return colors[id%len(colors)]
+}
+
 // -------------------------------
-// Structure Node et ses champs
+// Node structure and its fields
 // -------------------------------
 type Node struct {
-	ID          int // Identifiant unique du nœud
+	ID          int // Unique identifier for the node
 	Port        int
 	Address     string
 	logger      zerolog.Logger
-	G           bls12377.G1Affine     // Common G (identique pour tous)
-	DHExchanges map[int]*zn.DHParams  // Stocke l'échange DH pour chaque pair (clé = ID du pair)
-	DHHandler   *DiffieHellmanHandler // Handler dédié pour les échanges DH (rôle vérifieur)
-	//TxHandler   *TransactionHandler   // Handler dédié pour les transactions
+	G           bls12377.G1Affine     // Common G (same for all nodes)
+	DHExchanges map[int]*zn.DHParams  // Stores the DH exchange for each peer (key = peer's ID)
+	DHHandler   *DiffieHellmanHandler // Dedicated handler for DH exchanges (verifier role)
+	//TxHandler      *TransactionHandler   // Dedicated handler for transactions
 	TxHandler        TxHandlerInterface
 	DHRequestHandler *DHRequestHandler
 }
@@ -64,7 +77,7 @@ type TxHandlerInterface interface {
 	HandleMessage(msg zn.Message, conn net.Conn)
 }
 
-// NewNode crée et initialise un nœud avec son ID, son port et le common G.
+// NewNode creates and initializes a node with its ID, port, and the common G.
 func NewNode(port int, id int, commonG bls12377.G1Affine, isValidator bool) *Node {
 	logger := zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr}).With().Timestamp().Logger()
 
@@ -89,29 +102,29 @@ func NewNode(port int, id int, commonG bls12377.G1Affine, isValidator bool) *Nod
 }
 
 // -------------------------------
-// Méthodes du Node
+// Node methods
 // -------------------------------
 
-// Run démarre le serveur TCP du nœud et attend les connexions entrantes.
+// Run starts the node's TCP server and listens for incoming connections.
 func (n *Node) Run(wg *sync.WaitGroup) {
 	defer wg.Done()
 	ln, err := net.Listen("tcp", ":"+strconv.Itoa(n.Port))
 	if err != nil {
-		n.logger.Error().Err(err).Msg("Erreur lors de l'écoute")
+		n.logger.Error().Err(err).Msg(fmt.Sprintf("%s[Node %d] [TCP Server] Error while listening\033[0m", getNodeColor(n.ID), n.ID))
 		return
 	}
-	n.logger.Info().Msgf("Serveur démarré sur %s", n.Address)
+	n.logger.Info().Msgf("%s[Node %d] [TCP Server] Server started on %s\033[0m", getNodeColor(n.ID), n.ID, n.Address)
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
-			n.logger.Error().Err(err).Msg("Erreur lors de l'acceptation d'une connexion")
+			n.logger.Error().Err(err).Msg(fmt.Sprintf("%s[Node %d] [TCP Server] Error accepting a connection\033[0m", getNodeColor(n.ID), n.ID))
 			continue
 		}
 		go n.handleConnection(conn)
 	}
 }
 
-// handleConnection reçoit des messages via gob en boucle et les transmet au handler approprié.
+// handleConnection continuously receives gob messages and dispatches them to the appropriate handler.
 func (n *Node) handleConnection(conn net.Conn) {
 	defer conn.Close()
 	for {
@@ -119,14 +132,14 @@ func (n *Node) handleConnection(conn net.Conn) {
 		err := zn.ReceiveMessage(conn, &msg)
 		if err != nil {
 			if err == io.EOF {
-				n.logger.Info().Msg("Connexion fermée par le client (EOF)")
+				n.logger.Info().Msg(fmt.Sprintf("%s[Node %d] [Connection] Client closed connection (EOF)\033[0m", getNodeColor(n.ID), n.ID))
 			} else {
-				n.logger.Error().Err(err).Msg("Erreur lors de la réception du message via gob")
+				n.logger.Error().Err(err).Msg(fmt.Sprintf("%s[Node %d] [Connection] Error receiving message via gob\033[0m", getNodeColor(n.ID), n.ID))
 			}
 			return
 		}
 		//n.logger.Info().Msgf("Message reçu : %+v", msg)
-		n.logger.Info().Msgf("Message reçu")
+		n.logger.Info().Msg(fmt.Sprintf("%s[Node %d] [Message] Message received\033[0m", getNodeColor(n.ID), n.ID))
 		switch msg.Type {
 		case "DiffieHellman":
 			n.DHHandler.HandleMessage(msg, conn)
@@ -140,50 +153,50 @@ func (n *Node) handleConnection(conn net.Conn) {
 	}
 }
 
-// SendMessage établit une connexion vers une adresse cible et envoie le message.
+// SendMessage establishes a connection to a target address and sends the message.
 func (n *Node) SendMessage(targetAddress string, msg zn.Message) error {
 	conn, err := net.Dial("tcp", targetAddress)
 	if err != nil {
-		n.logger.Error().Err(err).Msgf("Erreur lors du dial vers %s", targetAddress)
+		n.logger.Error().Err(err).Msgf("%s[Node %d] [SendMessage] Error dialing %s\033[0m", getNodeColor(n.ID), n.ID, targetAddress)
 		return err
 	}
 	defer conn.Close()
 	if err := zn.SendMessage(conn, msg); err != nil {
-		n.logger.Error().Err(err).Msg("Erreur lors de l'envoi du message")
+		n.logger.Error().Err(err).Msg(fmt.Sprintf("%s[Node %d] [SendMessage] Error sending message\033[0m", getNodeColor(n.ID), n.ID))
 		return err
 	}
-	n.logger.Info().Msgf("Message envoyé à %s : %v", targetAddress, msg)
+	n.logger.Info().Msgf("%s[Node %d] [SendMessage] Message sent to %s: %v\033[0m", getNodeColor(n.ID), n.ID, targetAddress, msg)
 	return nil
 }
 
-// DiffieHellmanKeyExchange exécute le protocole d'échange de clés pour le rôle d'initiateur.
-// Le nœud initie l'échange avec un pair situé à targetAddress.
-// Il génère son secret r, calcule A = G^r, envoie A, attend B = G^b, calcule le secret partagé S = B^r,
-// puis stocke l'échange dans DHExchanges sous la clé correspondant à l'ID du pair.
+// DiffieHellmanKeyExchange executes the key exchange protocol in the initiator role.
+// The node initiates the exchange with a peer at targetAddress.
+// It generates its ephemeral secret r, computes A = G^r, sends A, waits for B = G^b, computes the shared secret S = B^r,
+// then stores the exchange in DHExchanges with the key corresponding to the peer's ID.
 func (n *Node) DiffieHellmanKeyExchange(targetAddress string) error {
 	var r_bytes [32]byte
 	var shared bls12377.G1Affine
 
 	conn, err := net.Dial("tcp", targetAddress)
 	if err != nil {
-		n.logger.Error().Err(err).Msgf("Erreur lors du dial vers %s", targetAddress)
+		n.logger.Error().Err(err).Msgf("%s[Node %d] [Diffie-Hellman] Error dialing %s\033[0m", getNodeColor(n.ID), n.ID, targetAddress)
 		return err
 	}
 	defer conn.Close()
 
 	G := n.G
 
-	// Générer le secret éphémère r et calculer A = G^r.
+	// Generate the ephemeral secret r and compute A = G^r.
 	r, _ := zg.GenerateBls12377_frElement()
 	r_bytes = r.Bytes()
 	A := *new(bls12377.G1Affine).ScalarMultiplication(&G, new(big.Int).SetBytes(r_bytes[:]))
-	// Stockage temporaire sous clé -1.
+	// Temporary storage with key -1.
 	n.DHExchanges[-1] = &zn.DHParams{
 		EphemeralPublic: A,
 		Secret:          r_bytes[:],
 	}
 
-	// Envoyer "DH_G_r" contenant A.
+	// Send "DH_G_r" containing A.
 	dhPayload := zn.DHPayload{
 		ID:      n.ID,
 		SubType: "DH_G_r",
@@ -191,145 +204,50 @@ func (n *Node) DiffieHellmanKeyExchange(targetAddress string) error {
 	}
 	msg := zn.PackMessage("DiffieHellman", dhPayload)
 	if err := zn.SendMessage(conn, msg); err != nil {
-		n.logger.Error().Err(err).Msg("Erreur lors de l'envoi de DH_G_r")
+		n.logger.Error().Err(err).Msg(fmt.Sprintf("%s[Node %d] [Diffie-Hellman] Error sending DH_G_r\033[0m", getNodeColor(n.ID), n.ID))
 		return err
 	}
-	n.logger.Info().Msg("DH_G_r envoyé avec succès.")
+	n.logger.Info().Msg(fmt.Sprintf("%s[Node %d] [Diffie-Hellman] DH_G_r sent successfully\033[0m", getNodeColor(n.ID), n.ID))
 
-	// Attendre la réponse "DH_G_b" du pair.
+	// Wait for the response "DH_G_b" from the peer.
 	var response zn.Message
 	if err := zn.ReceiveMessage(conn, &response); err != nil {
-		n.logger.Error().Err(err).Msg("Erreur lors de la réception de DH_G_b")
+		n.logger.Error().Err(err).Msg(fmt.Sprintf("%s[Node %d] [Diffie-Hellman] Error receiving DH_G_b\033[0m", getNodeColor(n.ID), n.ID))
 		return err
 	}
 	//n.logger.Info().Msgf("Réponse reçue : %+v", response)
-	n.logger.Info().Msgf("Réponse reçue")
+	n.logger.Info().Msg(fmt.Sprintf("%s[Node %d] [Diffie-Hellman] Response received\033[0m", getNodeColor(n.ID), n.ID))
 	respPayload, ok := response.Payload.(zn.DHPayload)
 	if !ok || respPayload.SubType != "DH_G_b" {
-		n.logger.Error().Msg("Payload reçu non conforme pour DH_G_b")
-		return fmt.Errorf("payload non conforme")
+		n.logger.Error().Msg(fmt.Sprintf("%s[Node %d] [Diffie-Hellman] Received payload not conforming to DH_G_b\033[0m", getNodeColor(n.ID), n.ID))
+		return fmt.Errorf("non conforming payload")
 	}
-	// Récupérer B envoyé par le pair (vérifieur).
+	// Retrieve B sent by the peer (verifier).
 	B := respPayload.Value
 
-	// Calculer le secret partagé S = B^r.
+	// Compute the shared secret S = B^r.
 	shared = *new(bls12377.G1Affine).ScalarMultiplication(&B, new(big.Int).SetBytes(r_bytes[:]))
 
-	// Mettre à jour la map : supprimer l'entrée temporaire (-1) et utiliser l'ID du pair.
+	// Update the map: remove the temporary entry (-1) and use the peer's ID.
 	delete(n.DHExchanges, -1)
 	n.DHExchanges[respPayload.ID] = &zn.DHParams{
 		EphemeralPublic: A,
-		PartnerPublic:   B, // stocke ici la clé B reçue (via respPayload.Value)
+		PartnerPublic:   B, // Store the received key B (via respPayload.Value)
 		Secret:          r_bytes[:],
 		SharedSecret:    shared,
 	}
 
 	//n.logger.Info().Msgf("Secret partagé calculé: %+v", shared)
-	n.logger.Info().Msgf("Secret partagé calculé")
+	n.logger.Info().Msg(fmt.Sprintf("%s[Node %d] [Diffie-Hellman] Shared secret computed\033[0m", getNodeColor(n.ID), n.ID))
 	return nil
 }
 
-// func (n *Node) SendTransactionDummy(targetAddress string, targetID int, globalCCS constraint.ConstraintSystem, globalPK groth16.ProvingKey, globalVK groth16.VerifyingKey) error {
-
-// 	conn, err := net.Dial("tcp", targetAddress)
-// 	if err != nil {
-// 		n.logger.Error().Err(err).Msgf("Erreur lors du dial vers %s", targetAddress)
-// 		return err
-// 	}
-// 	defer conn.Close()
-
-// 	old1 := zg.Note{
-// 		Value:   zg.NewGamma(12, 5),
-// 		PkOwner: []byte("Alice"),
-// 		Rho:     big.NewInt(1111).Bytes(),
-// 		Rand:    big.NewInt(2222).Bytes(),
-// 	}
-// 	old1.Cm = zg.Committment(old1.Value.Coins, old1.Value.Energy, big.NewInt(1111), big.NewInt(2222))
-
-// 	old2 := zg.Note{
-// 		Value:   zg.NewGamma(10, 8),
-// 		PkOwner: []byte("Bob"),
-// 		Rho:     big.NewInt(3333).Bytes(),
-// 		Rand:    big.NewInt(4444).Bytes(),
-// 	}
-// 	old2.Cm = zg.Committment(old2.Value.Coins, old2.Value.Energy, big.NewInt(3333), big.NewInt(4444))
-
-// 	skOld1 := []byte("SK_OLD_1_XX_MIMC_ONLY")
-// 	skOld2 := []byte("SK_OLD_2_XX_MIMC_ONLY")
-
-// 	// 2 new notes
-// 	new1 := zg.NewGamma(9, 10)
-// 	new2 := zg.NewGamma(13, 3)
-
-// 	pkNew1 := []byte("pkNew1_XXXXXXXXXXXX")
-// 	pkNew2 := []byte("pkNew2_XXXXXXXXXXXX")
-
-// 	// 3) Construction TxProverInputHighLevel
-// 	inp := zg.TxProverInputHighLevel{
-// 		OldNotes: [2]zg.Note{old1, old2},
-// 		OldSk:    [2][]byte{skOld1, skOld2},
-// 		NewVals:  [2]zg.Gamma{new1, new2},
-// 		NewPk:    [2][]byte{pkNew1, pkNew2},
-// 		EncKey:   n.DHExchanges[targetID].SharedSecret,
-// 		R:        n.DHExchanges[targetID].Secret,
-// 		//B:        b_bytes[:],
-// 		G:   n.G,
-// 		G_b: n.DHExchanges[targetID].PartnerPublic,
-// 		G_r: n.DHExchanges[targetID].EphemeralPublic,
-// 	}
-
-// 	/*
-// 		// Envoyer "DH_G_r" contenant A.
-// 		dhPayload := zn.DHPayload{
-// 			ID:      n.ID,
-// 			SubType: "DH_G_r",
-// 			Value:   A,
-// 		}
-// 		msg := zn.PackMessage("DiffieHellman", dhPayload)
-// 		if err := zn.SendMessage(conn, msg); err != nil {
-// 			n.logger.Error().Err(err).Msg("Erreur lors de l'envoi de DH_G_r")
-// 			return err
-// 		}
-// 		n.logger.Info().Msg("DH_G_r envoyé avec succès.")
-// 	*/
-
-// 	tx := Transaction(inp, globalCCS, globalPK, conn, n.ID)
-
-// 	msg := zn.PackMessage("tx", tx)
-// 	if err := zn.SendMessage(conn, msg); err != nil {
-// 		fmt.Printf("Erreur lors de l'envoi de la transaction: %v\n", err)
-// 		return nil
-// 	}
-
-// 	n.logger.Info().Msg("Transaction envoyée avec succès.")
-
-// 	// Envoyer la transaction
-// 	//msg := zn.PackMessage("tx", proof)
-
-// 	/*
-// 		// Envoyer "DH_G_r" contenant A.
-// 		dhPayload := zn.DHPayload{
-// 			ID:      n.ID,
-// 			SubType: "DH_G_r",
-// 			Value:   A,
-// 		}
-// 		msg := zn.PackMessage("DiffieHellman", dhPayload)
-// 		if err := zn.SendMessage(conn, msg); err != nil {
-// 			n.logger.Error().Err(err).Msg("Erreur lors de l'envoi de DH_G_r")
-// 			return err
-// 		}
-// 		n.logger.Info().Msg("DH_G_r envoyé avec succès.")
-// 	*/
-
-// 	//
-// 	return nil
-// }
-
+// SendTransactionDummyImproved sends a dummy transaction for validation.
 func (n *Node) SendTransactionDummyImproved(validatorAddress string, targetAddress string, targetID int, globalCCS constraint.ConstraintSystem, globalPK groth16.ProvingKey, globalVK groth16.VerifyingKey) error {
 
 	conn, err := net.Dial("tcp", validatorAddress)
 	if err != nil {
-		n.logger.Error().Err(err).Msgf("Erreur lors du dial vers %s", validatorAddress)
+		n.logger.Error().Err(err).Msgf("%s[Node %d] [Transaction] Error dialing %s\033[0m", getNodeColor(n.ID), n.ID, validatorAddress)
 		return err
 	}
 	defer conn.Close()
@@ -360,7 +278,7 @@ func (n *Node) SendTransactionDummyImproved(validatorAddress string, targetAddre
 	pkNew1 := []byte("pkNew1_XXXXXXXXXXXX")
 	pkNew2 := []byte("pkNew2_XXXXXXXXXXXX")
 
-	// 3) Construction TxProverInputHighLevel
+	// 3) Build TxProverInputHighLevel
 	inp := zg.TxProverInputHighLevel{
 		OldNotes: [2]zg.Note{old1, old2},
 		OldSk:    [2][]byte{skOld1, skOld2},
@@ -375,7 +293,7 @@ func (n *Node) SendTransactionDummyImproved(validatorAddress string, targetAddre
 	}
 
 	/*
-		// Envoyer "DH_G_r" contenant A.
+		// Send "DH_G_r" containing A.
 		dhPayload := zn.DHPayload{
 			ID:      n.ID,
 			SubType: "DH_G_r",
@@ -393,17 +311,17 @@ func (n *Node) SendTransactionDummyImproved(validatorAddress string, targetAddre
 
 	msg := zn.PackMessage("tx", tx)
 	if err := zn.SendMessage(conn, msg); err != nil {
-		fmt.Printf("Erreur lors de l'envoi de la transaction: %v\n", err)
+		fmt.Printf("%s[Node %d] [Transaction] Error sending transaction: %v\033[0m\n", getNodeColor(n.ID), n.ID, err)
 		return nil
 	}
 
-	n.logger.Info().Msg("Transaction envoyée avec succès pour validation")
+	n.logger.Info().Msg(fmt.Sprintf("%s[Node %d] [Transaction] Transaction sent successfully for validation\033[0m", getNodeColor(n.ID), n.ID))
 
-	// Envoyer la transaction
+	// Send the transaction
 	//msg := zn.PackMessage("tx", proof)
 
 	/*
-		// Envoyer "DH_G_r" contenant A.
+		// Send "DH_G_r" containing A.
 		dhPayload := zn.DHPayload{
 			ID:      n.ID,
 			SubType: "DH_G_r",
@@ -422,13 +340,13 @@ func (n *Node) SendTransactionDummyImproved(validatorAddress string, targetAddre
 }
 
 func Transaction(inp zg.TxProverInputHighLevel, globalCCS constraint.ConstraintSystem, globalPK groth16.ProvingKey, conn net.Conn, ID int, targetAddress string, targetID int) zn.Tx {
-	// 1) snOld[i] = MiMC(skOld[i], RhoOld[i]) hors-circuit
+	// 1) snOld[i] = MiMC(skOld[i], RhoOld[i]) off-circuit
 	var snOld [2][]byte
 	for i := 0; i < 2; i++ {
 		sn := zg.CalcSerialMimc(inp.OldSk[i], inp.OldNotes[i].Rho)
 		snOld[i] = sn
 	}
-	// 2) generer (rhoNew, randNew), cmNew, cNew
+	// 2) Generate (rhoNew, randNew), cmNew, cNew
 	var rhoNew [2]*big.Int
 	var randNew [2]*big.Int
 	var cmNew [2][]byte
@@ -445,44 +363,44 @@ func Transaction(inp zg.TxProverInputHighLevel, globalCCS constraint.ConstraintS
 			inp.NewVals[j].Coins, inp.NewVals[j].Energy,
 			rhoNew[j], randNew[j], cm)
 
-		//get pk_enc
+		// get pk_enc
 		pk_enc := encVal[0].Bytes()
 		pk_enc_bytes := make([]byte, len(pk_enc))
 		copy(pk_enc_bytes, pk_enc[:])
 		cNew[j].PkOwner = pk_enc_bytes
 
-		//get coins_enc
+		// get coins_enc
 		coins_enc := encVal[1].Bytes()
 		coins_enc_bytes := make([]byte, len(coins_enc))
 		copy(coins_enc_bytes, coins_enc[:])
 		cNew[j].Value.Coins = new(big.Int).SetBytes(coins_enc_bytes)
 
-		//get energy_enc
+		// get energy_enc
 		energy_enc := encVal[2].Bytes()
 		energy_enc_bytes := make([]byte, len(energy_enc))
 		copy(energy_enc_bytes, energy_enc[:])
 		cNew[j].Value.Energy = new(big.Int).SetBytes(energy_enc_bytes)
 
-		//get rho_enc
+		// get rho_enc
 		rho_enc := encVal[3].Bytes()
 		rho_enc_bytes := make([]byte, len(rho_enc))
 		copy(rho_enc_bytes, rho_enc[:])
 		cNew[j].Rho = rho_enc_bytes
 
-		//get rand_enc
+		// get rand_enc
 		rand_enc := encVal[4].Bytes()
 		rand_enc_bytes := make([]byte, len(rand_enc))
 		copy(rand_enc_bytes, rand_enc[:])
 		cNew[j].Rand = rand_enc_bytes
 
-		//get cm_enc
+		// get cm_enc
 		cm_enc := encVal[5].Bytes()
 		cm_enc_bytes := make([]byte, len(cm_enc))
 		copy(cm_enc_bytes, cm_enc[:])
 		cNew[j].Cm = cm_enc_bytes
 	}
 
-	// 3) Construire InputProver
+	// 3) Build InputProver
 	var ip zg.InputProver
 	// old
 	for i := 0; i < 2; i++ {
@@ -501,25 +419,25 @@ func Transaction(inp zg.TxProverInputHighLevel, globalCCS constraint.ConstraintS
 		ip.NewEnergy[j] = inp.NewVals[j].Energy
 		ip.CmNew[j] = cmNew[j]
 
-		//pk
+		// pk
 
-		//allocate with make
+		// allocate with make
 		ip.CNew[j] = make([][]byte, 6)
 		ip.CNew[j][0] = cNew[j].PkOwner
 
-		//coins
+		// coins
 		ip.CNew[j][1] = cNew[j].Value.Coins.Bytes()
 
-		//energy
+		// energy
 		ip.CNew[j][2] = cNew[j].Value.Energy.Bytes()
 
-		//rho
+		// rho
 		ip.CNew[j][3] = cNew[j].Rho
 
-		//rand
+		// rand
 		ip.CNew[j][4] = cNew[j].Rand
 
-		//cm
+		// cm
 		ip.CNew[j][5] = cNew[j].Cm
 
 		ip.PkNew[j] = new(big.Int).SetBytes(inp.NewPk[j])
@@ -537,7 +455,7 @@ func Transaction(inp zg.TxProverInputHighLevel, globalCCS constraint.ConstraintS
 	wc, _ := ip.BuildWitness()
 	w, _ := frontend.NewWitness(wc, ecc.BW6_761.ScalarField())
 
-	// 4) Génération de preuve
+	// 4) Generate proof
 	_ = time.Now()
 	proof, err := groth16.Prove(globalCCS, globalPK, w)
 	if err != nil {
@@ -578,20 +496,19 @@ func Transaction(inp zg.TxProverInputHighLevel, globalCCS constraint.ConstraintS
 		TargetAddress: targetAddress,
 		TargetID:      targetID,
 	}
-
 }
 
-// RelayMessage permet de relayer un message (hors protocole Diffie–Hellman).
+// RelayMessage relays a message (outside the Diffie–Hellman protocol).
 func (n *Node) RelayMessage(fromAddress string, targetAddress string, message string) error {
 	relayMsg := fmt.Sprintf("Relayed from %s to %s: %s", fromAddress, targetAddress, message)
 	return n.SendMessage(targetAddress, zn.PackMessage("relay", relayMsg))
 }
 
 // -------------------------------
-// Handler Diffie–Hellman (rôle de vérifieur)
+// Diffie–Hellman Handler (verifier role)
 // -------------------------------
 type DiffieHellmanHandler struct {
-	Node *Node // Pointeur vers le nœud parent
+	Node *Node // Pointer to the parent node
 }
 
 func NewDiffieHellmanHandler(node *Node) *DiffieHellmanHandler {
@@ -600,46 +517,46 @@ func NewDiffieHellmanHandler(node *Node) *DiffieHellmanHandler {
 	}
 }
 
-// HandleMessage traite un message de type "DiffieHellman" reçu par le vérifieur.
-// Lorsqu'il reçoit "DH_G_r", il stocke A (la clé éphémère de l'initiateur),
-// génère son secret b, calcule B = G^b, calcule le secret partagé S = A^b,
-// et renvoie un message "DH_G_b" contenant B.
+// HandleMessage processes a "DiffieHellman" type message received by the verifier.
+// When it receives "DH_G_r", it stores A (the initiator's ephemeral key),
+// generates its ephemeral secret b, computes B = G^b, computes the shared secret S = A^b,
+// and sends back a "DH_G_b" message containing B.
 func (dh *DiffieHellmanHandler) HandleMessage(msg zn.Message, conn net.Conn) {
 	logger := zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr}).With().Timestamp().Logger()
 	remoteAddr := conn.RemoteAddr().String()
 	payload, ok := msg.Payload.(zn.DHPayload)
 	if !ok {
-		fmt.Printf("Handler DiffieHellman (node %d): Payload non conforme depuis %s", dh.Node.ID, remoteAddr)
+		fmt.Printf("DiffieHellman Handler (node %d): Non-conforming payload from %s", dh.Node.ID, remoteAddr)
 		return
 	}
 
 	if payload.SubType == "DH_G_r" {
-		// Stocker A reçu de l'initiateur dans DHExchanges sous la clé = payload.ID.
+		// Store A received from the initiator in DHExchanges with key = payload.ID.
 		dh.Node.DHExchanges[payload.ID] = &zn.DHParams{
 			EphemeralPublic: payload.Value,
 		}
-		logger.Info().Msgf("Handler DiffieHellman (node %d): Reçu DH_G_r de node %d", dh.Node.ID, payload.ID)
-		//fmt.Printf("Handler DiffieHellman (node %d): Reçu DH_G_r de node %d : %+v\n", dh.Node.ID, payload.ID, payload.Value)
+		logger.Info().Msg(fmt.Sprintf("%s[Node %d] [Diffie-Hellman] Received DH_G_r from node %d\033[0m", getNodeColor(dh.Node.ID), dh.Node.ID, payload.ID))
+		//fmt.Printf("DiffieHellman Handler (node %d): Received DH_G_r from node %d : %+v\n", dh.Node.ID, payload.ID, payload.Value)
 
-		// Générer le secret éphémère b et calculer B = G^b.
+		// Generate ephemeral secret b and compute B = G^b.
 		b, _ := zg.GenerateBls12377_frElement()
-		secret := b.Bytes() // secret du vérifieur
+		secret := b.Bytes() // verifier's secret
 		B := *new(bls12377.G1Affine).ScalarMultiplication(&dh.Node.G, new(big.Int).SetBytes(secret[:]))
-		// Calculer le secret partagé S = A^b.
+		// Compute the shared secret S = A^b.
 		A := dh.Node.DHExchanges[payload.ID].EphemeralPublic
 		shared := *new(bls12377.G1Affine).ScalarMultiplication(&A, new(big.Int).SetBytes(secret[:]))
-		// Stocker ces valeurs dans DHExchanges pour ce pair.
+		// Store these values in DHExchanges for this peer.
 		dh.Node.DHExchanges[payload.ID] = &zn.DHParams{
-			EphemeralPublic: payload.Value, // A reçu de l'initiateur
-			PartnerPublic:   B,             // B calculé par le vérifieur
+			EphemeralPublic: payload.Value, // A received from the initiator
+			PartnerPublic:   B,             // B computed by the verifier
 			Secret:          secret[:],
 			SharedSecret:    shared,
 		}
 
-		//fmt.Printf("Handler DiffieHellman (node %d): Secret partagé calculé: %+v\n", dh.Node.ID, shared)
-		logger.Info().Msgf("Handler DiffieHellman (node %d): Secret partagé calculé", dh.Node.ID)
+		//fmt.Printf("DiffieHellman Handler (node %d): Shared secret computed: %+v\n", dh.Node.ID, shared)
+		logger.Info().Msg(fmt.Sprintf("%s[Node %d] [Diffie-Hellman] Shared secret computed\033[0m", getNodeColor(dh.Node.ID), dh.Node.ID))
 
-		// Envoyer le message "DH_G_b" contenant B.
+		// Send the "DH_G_b" message containing B.
 		respPayload := zn.DHPayload{
 			ID:      dh.Node.ID,
 			SubType: "DH_G_b",
@@ -647,45 +564,45 @@ func (dh *DiffieHellmanHandler) HandleMessage(msg zn.Message, conn net.Conn) {
 		}
 		respMsg := zn.PackMessage("DiffieHellman", respPayload)
 		if err := zn.SendMessage(conn, respMsg); err != nil {
-			logger.Error().Err(err).Msgf("Handler DiffieHellman (node %d): Erreur lors de l'envoi de DH_G_b vers node %d", dh.Node.ID, payload.ID)
-			//fmt.Printf("Handler DiffieHellman (node %d): Erreur lors de l'envoi de DH_G_b vers node %d: %v\n", dh.Node.ID, payload.ID, err)
+			logger.Error().Err(err).Msg(fmt.Sprintf("%s[Node %d] [Diffie-Hellman] Error sending DH_G_b to node %d\033[0m", getNodeColor(dh.Node.ID), dh.Node.ID, payload.ID))
+			//fmt.Printf("DiffieHellman Handler (node %d): Error sending DH_G_b to node %d: %v\n", dh.Node.ID, payload.ID, err)
 		} else {
-			logger.Info().Msgf("Handler DiffieHellman (node %d): DH_G_b envoyé vers node %d", dh.Node.ID, payload.ID)
-			//fmt.Printf("Handler DiffieHellman (node %d): DH_G_b envoyé vers node %d\n", dh.Node.ID, payload.ID)
+			logger.Info().Msg(fmt.Sprintf("%s[Node %d] [Diffie-Hellman] DH_G_b sent to node %d\033[0m", getNodeColor(dh.Node.ID), dh.Node.ID, payload.ID))
+			//fmt.Printf("DiffieHellman Handler (node %d): DH_G_b sent to node %d\n", dh.Node.ID, payload.ID)
 		}
 	} else {
-		logger.Error().Msgf("Handler DiffieHellman (node %d): Sous-type inconnu '%s' depuis node %d", dh.Node.ID, payload.SubType, payload.ID)
-		//fmt.Printf("Handler DiffieHellman (node %d): Sous-type inconnu '%s' depuis node %d\n", dh.Node.ID, payload.SubType, payload.ID)
+		logger.Error().Msg(fmt.Sprintf("%s[Node %d] [Diffie-Hellman] Unknown subtype '%s' from node %d\033[0m", getNodeColor(dh.Node.ID), dh.Node.ID, payload.SubType, payload.ID))
+		//fmt.Printf("DiffieHellman Handler (node %d): Unknown subtype '%s' from node %d\n", dh.Node.ID, payload.SubType, payload.ID)
 	}
 }
 
 // -------------------------------
-// Handler Transaction
+// Transaction Handler
 // -------------------------------
 
-// TransactionHandler gère les messages de transaction.
+// TransactionHandler manages transaction messages.
 type TransactionHandler struct {
-	Node *Node // Pointeur vers le nœud parent
+	Node *Node // Pointer to the parent node
 }
 
-// NewTransactionHandler retourne un nouveau TransactionHandler.
+// NewTransactionHandler returns a new TransactionHandler.
 func NewTransactionHandler(node *Node) *TransactionHandler {
 	return &TransactionHandler{
 		Node: node,
 	}
 }
 
-// HandleMessage traite le message de type "tx".
-// Ici, on suppose que le payload est du type zg.TxResult (ou un type équivalent selon votre implémentation).
+// HandleMessage processes the "tx" message.
+// Here, we assume that the payload is of type zg.TxResult (or an equivalent type based on your implementation).
 func (th *TransactionHandler) HandleMessage(msg zn.Message, conn net.Conn) {
 	//tx, ok := msg.Payload.(zg.TxResult)
 	tx, ok := msg.Payload.(zn.Tx)
 	if !ok {
-		fmt.Println("TransactionHandler : payload invalide")
+		fmt.Println("TransactionHandler: invalid payload")
 		return
 	}
-	// Ici, vous pouvez traiter la transaction comme vous le souhaitez.
-	fmt.Printf("Transaction reçue : %+v\n", tx)
+	// Process the transaction as needed.
+	fmt.Printf("%s[Node %d] [Transaction] Transaction received: %+v\033[0m\n", getNodeColor(th.Node.ID), th.Node.ID, tx)
 
 	ID := tx.ID
 
@@ -708,11 +625,11 @@ func (th *TransactionHandler) HandleMessage(msg zn.Message, conn net.Conn) {
 }
 
 // -------------------------------
-// Handler Transaction Validator
+// Transaction Validator Handler
 // -------------------------------
 
 type TransactionValidatorHandler struct {
-	Node *Node // le validateur
+	Node *Node // the validator
 }
 
 func NewTransactionValidatorHandler(node *Node) *TransactionValidatorHandler {
@@ -721,67 +638,67 @@ func NewTransactionValidatorHandler(node *Node) *TransactionValidatorHandler {
 
 func (tvh *TransactionValidatorHandler) HandleMessage(msg zn.Message, conn net.Conn) {
 	logger := zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr}).With().Timestamp().Logger()
-	// Extraire la transaction (supposons qu'elle soit de type zn.Tx)
+	// Extract the transaction (assuming it's of type zn.Tx)
 	tx, ok := msg.Payload.(zn.Tx)
 	if !ok {
-		fmt.Println("TransactionValidatorHandler: payload invalide")
+		fmt.Println("TransactionValidatorHandler: invalid payload")
 		return
 	}
-	// Valider la transaction
-	//valid := zg.ValidateTx(tx.TxResult, tx.Old, tx.NewVal, tvh.Node.G, tvh.Node.DHExchanges[tx.ID].PartnerPublic, tvh.Node.DHExchanges[tx.ID].EphemeralPublic)
+	// Validate the transaction
+	// valid := zg.ValidateTx(tx.TxResult, tx.Old, tx.NewVal, tvh.Node.G, tvh.Node.DHExchanges[tx.ID].PartnerPublic, tvh.Node.DHExchanges[tx.ID].EphemeralPublic)
 
-	// Ouvrir une connexion vers le destinataire pour récupérer ses paramètres DH
+	// Open a connection to the recipient to retrieve its DH parameters
 	destConn, err := net.Dial("tcp", tx.TargetAddress)
 	if err != nil {
-		fmt.Printf("Erreur lors du dial vers destination %s: %v\n", tx.TargetAddress, err)
+		fmt.Printf("%s[Node %d] [Validator] Error dialing destination %s: %v\033[0m\n", getNodeColor(tvh.Node.ID), tvh.Node.ID, tx.TargetAddress, err)
 		return
 	}
 	defer destConn.Close()
 
-	// Envoyer une requête DH
+	// Send a DH request
 	reqPayload := zn.DHRequestPayload{SenderID: tx.ID}
 	reqMsg := zn.PackMessage("dh_request", reqPayload)
 	if err := zn.SendMessage(destConn, reqMsg); err != nil {
-		fmt.Printf("Erreur lors de l'envoi de la requête DH: %v\n", err)
+		fmt.Printf("%s[Node %d] [Validator] Error sending DH request: %v\033[0m\n", getNodeColor(tvh.Node.ID), tvh.Node.ID, err)
 		return
 	}
 
-	// Attendre la réponse DH
+	// Wait for the DH response
 	var respMsg zn.Message
 	if err := zn.ReceiveMessage(destConn, &respMsg); err != nil {
-		fmt.Printf("Erreur lors de la réception de la réponse DH: %v\n", err)
+		fmt.Printf("%s[Node %d] [Validator] Error receiving DH response: %v\033[0m\n", getNodeColor(tvh.Node.ID), tvh.Node.ID, err)
 		return
 	}
 	respPayload, ok := respMsg.Payload.(zn.DHResponsePayload)
 	if !ok {
-		fmt.Println("Réponse DH non conforme")
+		fmt.Println("DH response not conforming")
 		return
 	}
 
-	// Valider la transaction en utilisant les paramètres récupérés du destinataire
+	// Validate the transaction using the parameters retrieved from the recipient
 	valid := zg.ValidateTx(tx.TxResult, tx.Old, tx.NewVal, tvh.Node.G, respPayload.DestPartnerPublic, respPayload.DestEphemeralPublic)
 
 	if valid {
-		logger.Info().Msgf("Transaction validée par le validateur (node %d).", tvh.Node.ID)
+		logger.Info().Msg(fmt.Sprintf("%s[Node %d] [Validator] Transaction validated.\033[0m", getNodeColor(tvh.Node.ID), tvh.Node.ID))
 	} else {
-		logger.Info().Msgf("Transaction invalide par le validateur (node %d).", tvh.Node.ID)
+		logger.Info().Msg(fmt.Sprintf("%s[Node %d] [Validator] Transaction invalid.\033[0m", getNodeColor(tvh.Node.ID), tvh.Node.ID))
 	}
 	/*
 		if valid {
-			fmt.Printf("Transaction validée par le validateur (node %d).\n", tvh.Node.ID)
-			// Envoyer un message de validation (si nécessaire)
+			fmt.Printf("Transaction validated by validator (node %d).\n", tvh.Node.ID)
+			// Send a validation message (if needed)
 			//validatedPayload := struct{ Message string }{Message: "Transaction received and intercepted"}
 			validatedPayload := zn.Message{
 				Type:    "tx_validated",
 				Payload: "Transaction received and intercepted",
 			}
 			validatedMsg := zn.PackMessage("tx_validated", validatedPayload)
-			// Ici, on pourrait directement répondre à l'émetteur, ou agir autrement.
+			// Here, we could directly reply to the sender, or take another action.
 			if err := zn.SendMessage(conn, validatedMsg); err != nil {
-				fmt.Printf("Erreur lors de l'envoi de 'tx_validated': %v\n", err)
+				fmt.Printf("Error sending 'tx_validated': %v\n", err)
 			}
 		} else {
-			fmt.Printf("Transaction invalide par le validateur (node %d).\n", tvh.Node.ID)
+			fmt.Printf("Transaction invalid by validator (node %d).\n", tvh.Node.ID)
 		}*/
 }
 
@@ -799,32 +716,32 @@ func NewDHRequestHandler(node *Node) *DHRequestHandler {
 
 func (drh *DHRequestHandler) HandleMessage(msg zn.Message, conn net.Conn) {
 	logger := zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr}).With().Timestamp().Logger()
-	// Exemple d'implémentation :
-	// Extraire le payload de type DHRequestPayload (que vous devez définir)
+	// Example implementation:
+	// Extract the payload of type DHRequestPayload (which you must define)
 	req, ok := msg.Payload.(zn.DHRequestPayload)
 	if !ok {
-		fmt.Println("DHRequestHandler : payload invalide")
+		fmt.Println("DHRequestHandler: invalid payload")
 		return
 	}
-	logger.Info().Msgf("DHRequestHandler (node %d) : Reçu une requête DH de l'expéditeur %d", drh.Node.ID, req.SenderID)
+	logger.Info().Msg(fmt.Sprintf("%s[Node %d] [DH Request] Received a DH request from sender %d\033[0m", getNodeColor(drh.Node.ID), drh.Node.ID, req.SenderID))
 
-	// Récupérer les paramètres DH du destinataire (ici supposés stockés dans DHExchanges)
+	// Retrieve the DH parameters of the recipient (here assumed to be stored in DHExchanges)
 	exchange, exists := drh.Node.DHExchanges[req.SenderID]
 	if !exists {
-		fmt.Printf("DHRequestHandler (node %d) : Aucun échange pour l'expéditeur %d\n", drh.Node.ID, req.SenderID)
+		fmt.Printf("%s[Node %d] [DH Request] No exchange found for sender %d\033[0m\n", getNodeColor(drh.Node.ID), drh.Node.ID, req.SenderID)
 		return
 	}
 
-	// Construire la réponse avec les infos du destinataire
+	// Build the response with the recipient's info
 	resp := zn.DHResponsePayload{
 		DestPartnerPublic:   exchange.PartnerPublic,
 		DestEphemeralPublic: exchange.EphemeralPublic,
 	}
 	respMsg := zn.PackMessage("dh_response", resp)
 	if err := zn.SendMessage(conn, respMsg); err != nil {
-		logger.Info().Msgf("DHRequestHandler (node %d) : Erreur lors de l'envoi de la réponse DH: %v", drh.Node.ID, err)
+		logger.Info().Msg(fmt.Sprintf("%s[Node %d] [DH Request] Error sending DH response: %v\033[0m", getNodeColor(drh.Node.ID), drh.Node.ID, err))
 	} else {
-		logger.Info().Msgf("DHRequestHandler (node %d) : Réponse DH envoyée", drh.Node.ID)
+		logger.Info().Msg(fmt.Sprintf("%s[Node %d] [DH Request] DH response sent\033[0m", getNodeColor(drh.Node.ID), drh.Node.ID))
 	}
 }
 
@@ -836,26 +753,26 @@ func main() {
 
 	mainLogger := zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr}).With().Timestamp().Logger()
 
-	numNodes := flag.Int("n", 3, "Nombre de nœuds à créer")
-	basePort := flag.Int("basePort", 9000, "Port de base pour les nœuds")
+	numNodes := flag.Int("n", 3, "Number of nodes to create")
+	basePort := flag.Int("basePort", 9000, "Base port for nodes")
 	flag.Parse()
 
-	mainLogger.Info().Msgf("Initialisation de %d nœuds à partir du port %d", *numNodes, *basePort)
+	mainLogger.Info().Msgf("Initializing %d nodes starting from port %d", *numNodes, *basePort)
 
-	// Calcul du common G (calculé une seule fois).
+	// Compute the common G (computed once).
 	var commonG bls12377.G1Affine
 	{
 		gElem, _ := new(fr.Element).SetRandom()
 		commonG = *new(bls12377.G1Affine).ScalarMultiplicationBase(gElem.BigInt(new(big.Int)))
 	}
 
-	// Création et démarrage des nœuds.
+	// Create and start the nodes.
 	nodes := make([]*Node, *numNodes)
 	var wg sync.WaitGroup
 	for i := 0; i < *numNodes; i++ {
 		port := *basePort + i
 		var node *Node
-		if i == 1 { // Pour le premier nœud, on passe true
+		if i == 1 { // For the first node, pass true
 			node = NewNode(port, i, commonG, true)
 		} else {
 			node = NewNode(port, i, commonG, false)
@@ -872,11 +789,11 @@ func main() {
 	globalCCS, globalPK, globalVK := zg.LoadOrGenerateKeys("default")
 
 	///////////// Diffie–Hellman key exchange //////////////
-	// Exemple : le nœud 0 (initiateur) initie un échange avec le nœud 1 (vérifieur).
+	// Example: node 0 (initiator) initiates an exchange with node 1 (verifier).
 	nodes[0].DiffieHellmanKeyExchange(nodes[2].Address)
 	//fmt.Println()
 	nodes[0].SendTransactionDummyImproved(nodes[1].Address, nodes[2].Address, nodes[2].ID, globalCCS, globalPK, globalVK)
 
-	mainLogger.Info().Msg("Tous les nœuds sont opérationnels. Appuyez sur Ctrl+C pour arrêter.")
+	mainLogger.Info().Msg("All nodes are operational. Press Ctrl+C to stop.")
 	select {}
 }
