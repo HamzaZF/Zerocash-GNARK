@@ -8,6 +8,7 @@ import (
 	"time"
 
 	mimc_bw6_761 "github.com/consensys/gnark-crypto/ecc/bw6-761/fr/mimc"
+	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 
 	// Gnark + gnark-crypto
@@ -31,8 +32,8 @@ import (
 // (1) Fonctions utilitaires hors-circuit
 // -----------------------------------------------------------------------------
 
-// randBigInt renvoie un *big.Int pseudo-aléatoire (pour la démo).
-func randBigInt() *big.Int {
+// RandBigInt renvoie un *big.Int pseudo-aléatoire (pour la démo).
+func RandBigInt() *big.Int {
 	return big.NewInt(time.Now().UnixNano() & 0xFFFFF)
 }
 
@@ -51,9 +52,9 @@ func Committment(coins, energy, rho, r *big.Int) []byte {
 	return h.Sum(nil)
 }
 
-// calcSerialMimc : calcule sn = MiMC(sk, rho) hors-circuit, pour être cohérent
+// CalcSerialMimc : calcule sn = MiMC(sk, rho) hors-circuit, pour être cohérent
 // avec la PRF en circuit.
-func calcSerialMimc(sk, rho []byte) []byte {
+func CalcSerialMimc(sk, rho []byte) []byte {
 	h := mimcNative.NewMiMC()
 	h.Write(sk)
 	h.Write(rho)
@@ -112,7 +113,7 @@ func EncZK(api frontend.API, pk, coins, energy, rho, rand, cm frontend.Variable,
 }
 */
 
-func buildEncMimc(EncKey bls12377.G1Affine, pk []byte, coins, energy, rho, rand *big.Int, cm []byte) []bls12377_fp.Element {
+func BuildEncMimc(EncKey bls12377.G1Affine, pk []byte, coins, energy, rho, rand *big.Int, cm []byte) []bls12377_fp.Element {
 
 	pk_int := new(big.Int).SetBytes(pk[:])
 
@@ -334,7 +335,7 @@ func PRF(api frontend.API, sk, rho frontend.Variable) frontend.Variable {
 // 	return h.Sum()
 // }
 
-//func buildEncMimc(pk []byte, coins, energy, rho, rand *big.Int, cm []byte) []byte {
+//func BuildEncMimc(pk []byte, coins, energy, rho, rand *big.Int, cm []byte) []byte {
 
 func EncZK(api frontend.API, pk, coins, energy, rho, rand, cm frontend.Variable, enc_key sw_bls12377.G1Affine) []frontend.Variable {
 	h, _ := mimc.NewMiMC(api)
@@ -497,7 +498,7 @@ func Transaction(inp TxProverInputHighLevel) TxResult {
 	// 1) snOld[i] = MiMC(skOld[i], RhoOld[i]) hors-circuit
 	var snOld [2][]byte
 	for i := 0; i < 2; i++ {
-		sn := calcSerialMimc(inp.OldSk[i], inp.OldNotes[i].Rho)
+		sn := CalcSerialMimc(inp.OldSk[i], inp.OldNotes[i].Rho)
 		snOld[i] = sn
 	}
 	// 2) generer (rhoNew, randNew), cmNew, cNew
@@ -508,12 +509,12 @@ func Transaction(inp TxProverInputHighLevel) TxResult {
 	var cNew [2]Note
 
 	for j := 0; j < 2; j++ {
-		rhoNew[j] = randBigInt()
-		randNew[j] = randBigInt()
+		rhoNew[j] = RandBigInt()
+		randNew[j] = RandBigInt()
 		cm := Committment(inp.NewVals[j].Coins, inp.NewVals[j].Energy,
 			rhoNew[j], randNew[j])
 		cmNew[j] = cm
-		encVal := buildEncMimc(inp.EncKey, inp.NewPk[j],
+		encVal := BuildEncMimc(inp.EncKey, inp.NewPk[j],
 			inp.NewVals[j].Coins, inp.NewVals[j].Energy,
 			rhoNew[j], randNew[j], cm)
 
@@ -715,8 +716,8 @@ var (
 	globalVK  groth16.VerifyingKey
 )
 
-func LoadOrGenerateKeys(circuit_type string) {
-
+func LoadOrGenerateKeys(circuit_type string) (constraint.ConstraintSystem, groth16.ProvingKey, groth16.VerifyingKey) {
+	logger := log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
 	switch circuit_type {
 	case "default":
 		if _, err := os.Stat("_run_default"); os.IsNotExist(err) {
@@ -729,7 +730,7 @@ func LoadOrGenerateKeys(circuit_type string) {
 			d, _ := os.ReadFile(cssFile)
 			ccs := groth16.NewCS(ecc.BW6_761)
 			ccs.ReadFrom(bytes.NewReader(d))
-			fmt.Println("Circuit loaded from", cssFile)
+			logger.Info().Str("cssFile", cssFile).Msg("Circuit loaded from disk")
 			globalCCS = ccs
 		} else {
 			//fmt.Println("Compiling circuit =>", cssFile)
@@ -747,7 +748,7 @@ func LoadOrGenerateKeys(circuit_type string) {
 		vkFile := "_run_default/zk_vk"
 		if fileExists(pkFile) && fileExists(vkFile) {
 
-			log.Info().Str("vkFile", vkFile).Str("pkFile", pkFile).Msg("Loading keys from disk")
+			logger.Info().Str("vkFile", vkFile).Str("pkFile", pkFile).Msg("Loading keys from disk")
 			pkData, _ := os.ReadFile(pkFile)
 			vkData, _ := os.ReadFile(vkFile)
 
@@ -764,7 +765,7 @@ func LoadOrGenerateKeys(circuit_type string) {
 			globalPK = pk
 			globalVK = vk
 		} else {
-			log.Info().Str("vkFile", vkFile).Str("pkFile", pkFile).Msg("Generating keys")
+			logger.Info().Str("vkFile", vkFile).Str("pkFile", pkFile).Msg("Generating keys")
 			//fmt.Println("Generating pk, vk =>", pkFile, vkFile)
 			pk, vk, err := groth16.Setup(globalCCS)
 			if err != nil {
@@ -781,6 +782,8 @@ func LoadOrGenerateKeys(circuit_type string) {
 			globalVK = vk
 		}
 	}
+
+	return globalCCS, globalPK, globalVK
 
 }
 

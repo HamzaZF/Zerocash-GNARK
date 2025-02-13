@@ -3,6 +3,7 @@ package zerocash_network
 
 import (
 	"net"
+	zg "zerocash_gnark/zerocash_gnark"
 
 	bls12377 "github.com/consensys/gnark-crypto/ecc/bls12-377"
 )
@@ -30,9 +31,27 @@ type DHPayload struct {
 // Structure DHParams : paramètres d'échange pour un pair
 // -------------------------------
 type DHParams struct {
-	EphemeralPublic bls12377.G1Affine // Pour l'initiateur : A = G^r, pour le vérifieur : B = G^b
-	Secret          []byte            // Secret éphémère : r (initiateur) ou b (vérifieur)
-	SharedSecret    bls12377.G1Affine // Secret partagé S = (G^r)^b = (G^b)^r
+	EphemeralPublic bls12377.G1Affine // La clé éphémère de ce nœud (A pour l'initiateur)
+	PartnerPublic   bls12377.G1Affine // La clé éphémère du pair (B pour l'initiateur, ou A pour le vérifieur)
+	Secret          []byte            // Le secret éphémère (r pour l'initiateur, b pour le vérifieur)
+	SharedSecret    bls12377.G1Affine // Le secret partagé S = (G^r)^b = (G^b)^r
+}
+
+type Tx struct {
+	TxResult      zg.TxResult
+	Old           [2]zg.Note
+	NewVal        [2]zg.Gamma
+	ID            int
+	TargetAddress string
+	TargetID      int
+}
+
+type DHRequestPayload struct {
+	SenderID int // ID de l'émetteur de la transaction
+}
+type DHResponsePayload struct {
+	DestPartnerPublic   bls12377.G1Affine // La clé publique éphémère du destinataire (B)
+	DestEphemeralPublic bls12377.G1Affine // La clé éphémère du destinataire (par exemple, A' ou autre)
 }
 
 type Handler interface {

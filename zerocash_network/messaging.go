@@ -4,6 +4,7 @@ package zerocash_network
 import (
 	"encoding/gob"
 	"net"
+	zg "zerocash_gnark/zerocash_gnark"
 )
 
 func SendMessage(conn net.Conn, data interface{}) error {
@@ -23,5 +24,9 @@ func init() {
 	gob.Register(Point{})
 	gob.Register(DHPayload{})
 	gob.Register(DHParams{})
+	gob.Register(zg.TxResult{})
+	gob.Register(Tx{})
+	gob.Register(DHRequestPayload{})
+	gob.Register(DHResponsePayload{})
 	// Vous pouvez enregistrer d'autres types personnalisés ici si nécessaire.
 }
