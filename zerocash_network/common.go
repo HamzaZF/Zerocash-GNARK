@@ -46,12 +46,53 @@ type Tx struct {
 	TargetID      int
 }
 
+type TxEncapsulated struct { ///MAJ MAIN GO; add serialization list, ...
+	Kind    int
+	Payload interface{}
+}
+
+type TxRegisterNew struct {
+	TxIn      TxEncapsulated
+	CmIn      []byte
+	PiReg     []byte
+	Ip        zg.InputProverRegister
+	AuxCipher [5][]byte
+}
+
+type TxRegister struct {
+	TxIn      TxEncapsulated
+	CmIn      []byte
+	PiReg     []byte
+	PubW      []byte
+	Ip        zg.InputProverRegister
+	AuxCipher [5][]byte
+}
+
+// type TxRegister struct {
+// 	TxIn      TxEncapsulated,
+
+type TxDefaultOneCoinPayload struct {
+	TxResult      zg.TxResultDefaultOneCoin
+	Old           zg.Note
+	NewVal        zg.Gamma
+	ID            int
+	TargetAddress string
+	TargetID      int
+	PublicWitness []byte
+}
+
 type DHRequestPayload struct {
 	SenderID int // ID de l'émetteur de la transaction
 }
 type DHResponsePayload struct {
 	DestPartnerPublic   bls12377.G1Affine // La clé publique éphémère du destinataire (B)
 	DestEphemeralPublic bls12377.G1Affine // La clé éphémère du destinataire (par exemple, A' ou autre)
+}
+
+type RegisterPayload struct {
+	AuxCipher []byte                  // ℂ^{Aux}: the auxiliary ciphertext
+	TxIn      TxDefaultOneCoinPayload // The "in" transaction (tx^{in})
+	PiReg     []byte                  // The registration proof π_reg
 }
 
 type Handler interface {

@@ -7,6 +7,13 @@ import (
 	zg "zerocash_gnark/zerocash_gnark"
 )
 
+const (
+	DiffieHellmanMsg = "DiffieHellman"
+	TxMsg            = "tx"
+	DHRequestMsg     = "dh_request"
+	RegisterMsg      = "register" // NEW: Registration message type
+)
+
 func SendMessage(conn net.Conn, data interface{}) error {
 	encoder := gob.NewEncoder(conn)
 	return encoder.Encode(data)
@@ -25,8 +32,13 @@ func init() {
 	gob.Register(DHPayload{})
 	gob.Register(DHParams{})
 	gob.Register(zg.TxResult{})
+	gob.Register(zg.TxResultDefaultOneCoin{})
 	gob.Register(Tx{})
+	gob.Register(TxDefaultOneCoinPayload{})
+	gob.Register(TxEncapsulated{})
 	gob.Register(DHRequestPayload{})
 	gob.Register(DHResponsePayload{})
+	gob.Register(RegisterPayload{})
+	gob.Register(TxRegister{})
 	// Vous pouvez enregistrer d'autres types personnalisés ici si nécessaire.
 }
