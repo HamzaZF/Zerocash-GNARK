@@ -2,10 +2,12 @@
 package zerocash_network
 
 import (
+	"math/big"
 	"net"
 	zg "zerocash_gnark/zerocash_gnark"
 
 	bls12377 "github.com/consensys/gnark-crypto/ecc/bls12-377"
+	bls12377_fp "github.com/consensys/gnark-crypto/ecc/bls12-377/fp"
 )
 
 type Message struct {
@@ -46,6 +48,23 @@ type Tx struct {
 	TargetID      int
 }
 
+type Transaction struct {
+	Tx interface{}
+	Id int
+}
+
+type AuxList struct {
+	C     [6]bls12377_fp.Element
+	Proof []byte
+	Id    int
+}
+
+type InfoBid struct {
+	Gamma zg.Gamma
+	Bid   *big.Int
+	Kind  bool
+}
+
 type TxEncapsulated struct { ///MAJ MAIN GO; add serialization list, ...
 	Kind    int
 	Payload interface{}
@@ -66,6 +85,8 @@ type TxRegister struct {
 	PubW      []byte
 	Ip        zg.InputProverRegister
 	AuxCipher [5][]byte
+	EncVal    []bls12377_fp.Element
+	Kind      bool
 }
 
 // type TxRegister struct {
@@ -79,6 +100,7 @@ type TxDefaultOneCoinPayload struct {
 	TargetAddress string
 	TargetID      int
 	PublicWitness []byte
+	EncVal        [6]bls12377_fp.Element
 }
 
 type DHRequestPayload struct {

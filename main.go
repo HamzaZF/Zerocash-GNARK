@@ -494,6 +494,7 @@ func (n *Node) SendTransactionRegister(validatorAddress string, targetAddress st
 	bid := zg.RandBigInt()
 
 	encVal := zg.BuildEncRegMimc(inp.EncKey, gammaIn, pkOut, skIn, bid)
+	fmt.Println("Eh pourtant: ", encVal)
 
 	///{*pk_enc, *skIn_enc, *bid_enc, *coins_enc, *energy_enc}
 
@@ -575,6 +576,7 @@ func (n *Node) SendTransactionRegister(validatorAddress string, targetAddress st
 		PubW:      pubReg,
 		Ip:        Ip,
 		AuxCipher: [5][]byte{pk_enc_bytes, skIn_enc_bytes, bid_enc_bytes, coins_enc_bytes, energy_enc_bytes},
+		EncVal:    encVal,
 	}
 
 	//send
@@ -694,8 +696,8 @@ func (n *Node) SendTransactionRegisterN(
 
 	// Construction de l'input pour la preuve d'enregistrement
 	inp_reg := zg.TxProverInputHighLevelRegister{
-		InCoin:   big.NewInt(12).Bytes(),
-		InEnergy: big.NewInt(5).Bytes(),
+		InCoin:   gammaIn.Coins.Bytes(),  //big.NewInt(12).Bytes(),
+		InEnergy: gammaIn.Energy.Bytes(), //big.NewInt(5).Bytes(),
 		CmIn:     nIn.Cm,
 		CAux:     [5][]byte{pk_enc_bytes, skIn_enc_bytes, bid_enc_bytes, coins_enc_bytes, energy_enc_bytes},
 		SkIn:     skIn,
@@ -736,6 +738,8 @@ func (n *Node) SendTransactionRegisterN(
 		PubW:      pubReg,
 		Ip:        Ip,
 		AuxCipher: [5][]byte{pk_enc_bytes, skIn_enc_bytes, bid_enc_bytes, coins_enc_bytes, energy_enc_bytes},
+		EncVal:    encVal,
+		Kind:      kind,
 	}
 
 	// Packager et envoyer le message
@@ -931,6 +935,8 @@ func TransactionOneCoin(inp zg.TxProverInputHighLevelDefaultOneCoin, globalCCSOn
 		inp.NewVal.Coins, inp.NewVal.Energy,
 		rhoNew, randNew, cm)
 
+	//ICI
+
 	// get pk_enc
 	pk_enc := encVal[0].Bytes()
 	pk_enc_bytes := make([]byte, len(pk_enc))
@@ -1057,6 +1063,7 @@ func TransactionOneCoin(inp zg.TxProverInputHighLevelDefaultOneCoin, globalCCSOn
 		TargetAddress: targetAddress,
 		TargetID:      targetID,
 		PublicWitness: pubBuf.Bytes(),
+		EncVal:        encVal,
 	}
 }
 
@@ -1836,9 +1843,11 @@ func (rh *RegisterHandler) HandleMessage(msg zn.Message, conn net.Conn) {
 
 	// 3) Prepare the arguments to ValidateTxRegister
 	//    These must match EXACTLY how you built them in SendTransactionRegister.
-	cmIn := /* e.g. */ txReg.CmIn                    // if you stored nIn.Cm in txReg
-	coinsIn := big.NewInt(12)                        // if you used 12 in your TxProverInputHighLevelRegister
-	energyIn := big.NewInt(5)                        // if you used 5
+	cmIn := /* e.g. */ txReg.CmIn     // if you stored nIn.Cm in txReg
+	coinsIn := txOneCoin.NewVal.Coins //big.NewInt(12)                        // if you used 12 in your TxProverInputHighLevelRegister
+	fmt.Println("txOneCoin.NewVal.Coins =", txOneCoin.NewVal.Coins)
+	energyIn := txOneCoin.NewVal.Energy //big.NewInt(5)                        // if you used 5
+	fmt.Println("txOneCoin.NewVal.Energy =", txOneCoin.NewVal.Energy)
 	bid := new(big.Int).SetBytes(txReg.AuxCipher[2]) // if the 3rd slot is the plain bid
 
 	/*
@@ -1877,7 +1886,12 @@ func (rh *RegisterHandler) HandleMessage(msg zn.Message, conn net.Conn) {
 		// Update your local lists
 		SnList = append(SnList, txOneCoin.TxResult.SnOld)
 		TxListDefaultOneCoin = append(TxListDefaultOneCoin, txOneCoin.TxResult)
-		CmList = append(CmList, txOneCoin.TxResult.CmNew)
+		CmListTemp = append(CmListTemp, txOneCoin.TxResult.CmNew)
+		TxListTemp = append(TxListTemp, zn.Transaction{Tx: txReg, Id: txOneCoin.ID})
+		//
+		//var EncVal [5]bl.Element = txOneCoin.EncVal[0:5]
+		AuxList = append(AuxList, zn.AuxList{C: txOneCoin.EncVal, Proof: txReg.PiReg, Id: txOneCoin.ID})
+		InfoBid = append(InfoBid, zn.InfoBid{Gamma: zg.Gamma{Coins: txReg.Ip.GammaInCoins, Energy: txReg.Ip.GammaInEnergy}, Bid: txReg.Ip.Bid, Kind: txReg.Kind})
 	} else {
 		rh.Node.logger.Info().Msgf(
 			"%s[Node %d] [RegisterHandler] Register TX invalid.\033[0m",
@@ -2025,6 +2039,10 @@ var CmList [][]byte
 var SnList [][]byte
 var TxListDefaultOneCoin []zg.TxResultDefaultOneCoin
 var TxList []zg.TxResult
+var TxListTemp []zn.Transaction
+var CmListTemp [][]byte
+var AuxList []zn.AuxList
+var InfoBid []zn.InfoBid
 
 // containsByteSlice checks if a slice of byte slices contains a specific byte slice.
 func containsByteSlice(slice [][]byte, item []byte) bool {
@@ -2034,6 +2052,65 @@ func containsByteSlice(slice [][]byte, item []byte) bool {
 		}
 	}
 	return false
+}
+
+func (n *Node) Auction(TxListTemp []zn.Transaction, AuxList []zn.AuxList) {
+
+	//Decipher Caux
+	var decValuesList []*zg.DecryptedValues
+	for i := 0; i < len(TxListTemp); i++ {
+		// fmt.Println("TxListTemp[i].Id=", TxListTemp[i].Id)
+		// fmt.Println("AuxList[i].C=", AuxList[i].C)
+		// fmt.Println("n.DHExchanges[TxListTemp[i].Id]=", n.DHExchanges[TxListTemp[i].Id])
+		// fmt.Println("n.DHExchanges[TxListTemp[i].Id].SharedSecret", n.DHExchanges[TxListTemp[i].Id].SharedSecret)
+		decValues, err := zg.BuildDecMimc(n.DHExchanges[TxListTemp[i].Id].SharedSecret, AuxList[i].C)
+		if err != nil {
+			fmt.Println("Error deciphering Caux")
+		}
+		decValuesList = append(decValuesList, decValues)
+		// fmt.Println("decValues n=", i, ": ", decValues)
+	}
+
+	//Decipher Cin
+	var decCinList []*zg.RegDecryptedValues
+	for i := 0; i < len(TxListTemp); i++ {
+		// fmt.Println("TxListTemp[i].Id=", TxListTemp[i].Id)
+		// fmt.Println("AuxList[i].C=", AuxList[i].C)
+		// fmt.Println("n.DHExchanges[TxListTemp[i].Id]=", n.DHExchanges[TxListTemp[i].Id])
+		// fmt.Println("n.DHExchanges[TxListTemp[i].Id].SharedSecret", n.DHExchanges[TxListTemp[i].Id].SharedSecret)
+		txRegister, ok := TxListTemp[i].Tx.(zn.TxRegister)
+		if !ok {
+			fmt.Println("Error asserting Tx to TxRegister")
+			continue
+		}
+		//fmt.Println("txRegister.EncVal = ", txRegister.EncVal)
+		decRegValues, err := zg.BuildDecRegMimc(n.DHExchanges[TxListTemp[i].Id].SharedSecret, txRegister.EncVal)
+		if err != nil {
+			fmt.Println("Error deciphering Caux")
+		}
+		decCinList = append(decCinList, decRegValues)
+		// fmt.Println("decValues n=", i, ": ", decValues)
+	}
+
+	fmt.Println("decCinList[0].Coins:", decCinList[0].Coins)
+	fmt.Println("decCinList[0].Energy:", decCinList[0].Energy)
+
+	fmt.Println("decCinList[0].Bid:", decCinList[0].Bid)
+	fmt.Println("decCinList[0].Bid:", decCinList[0].Bid)
+
+	for i := 0; i < len(InfoBid); i++ {
+		fmt.Println("InfoBid[i].Gamma.Coins:", InfoBid[i].Gamma.Coins)
+		fmt.Println("InfoBid[i].Gamma.Energy:", InfoBid[i].Gamma.Energy)
+		fmt.Println("InfoBid[i].Bid:", InfoBid[i].Bid)
+		fmt.Println("InfoBid[i].Kind:", InfoBid[i].Kind)
+	}
+	//TxListTemp = append(TxListTemp, zn.Transaction{Tx: txReg, Id: txOneCoin.ID})
+
+	// for i := 0; i < len(TxListTemp); i++ {
+	// 	//Decrypt Caux
+	// 	Caux = AuxList[i].C
+	// 	Proof = AuxList[i].Proof
+
 }
 
 func main() {
@@ -2080,10 +2157,13 @@ func main() {
 
 	///////////// Diffie–Hellman key exchange //////////////
 	nodes[1].DiffieHellmanKeyExchange(nodes[2].Address)
+	nodes[2].DiffieHellmanKeyExchange(nodes[3].Address)
+	nodes[3].DiffieHellmanKeyExchange(nodes[1].Address)
 	//nodes[2].DiffieHellmanKeyExchange(nodes[1].Address)
 
 	nodes[1].DiffieHellmanKeyExchange(nodes[0].Address)
 	nodes[2].DiffieHellmanKeyExchange(nodes[0].Address)
+	nodes[3].DiffieHellmanKeyExchange(nodes[0].Address)
 
 	time.Sleep(1 * time.Second)
 
@@ -2110,20 +2190,22 @@ func main() {
 	pkBase_1 := GeneratePk(sk_base_1)
 	rho_base_1 := big.NewInt(1111).Bytes()
 	rand_base_1 := big.NewInt(2222).Bytes()
-	value_base_1 := zg.NewGamma(12, 5)
+	value_base_1 := zg.NewGamma(13, 2)
 	nBase_1 := GenerateNote(value_base_1, pkBase_1, rho_base_1, rand_base_1)
 
 	sk_in_1 := GenerateSk()
 	pkIn_1 := GeneratePk(sk_in_1)
 	rho_in_1 := big.NewInt(1111).Bytes()
 	rand_in_1 := big.NewInt(2222).Bytes()
-	gammaIn_1 := zg.NewGamma(12, 5)
+	gammaIn_1 := zg.NewGamma(13, 2)
 	nIn_1 := GenerateNote(gammaIn_1, pkIn_1, rho_in_1, rand_in_1)
 
 	//new1 := zg.NewGamma(12, 5)
 	sk_out_1 := GenerateSk()
 	pkOut_1 := GeneratePk(sk_out_1)
 	bid_1 := big.NewInt(5) //bid energy
+
+	fmt.Println("HERE:", bid_1)
 
 	/////////////////
 	///////Notes of nodes[2] (nBase, nIn, nOut)
@@ -2133,14 +2215,14 @@ func main() {
 	pkBase_2 := GeneratePk(sk_base_2)
 	rho_base_2 := big.NewInt(1111).Bytes()
 	rand_base_2 := big.NewInt(2222).Bytes()
-	value_base_2 := zg.NewGamma(12, 5)
+	value_base_2 := zg.NewGamma(15, 1)
 	nBase_2 := GenerateNote(value_base_2, pkBase_2, rho_base_2, rand_base_2)
 
 	sk_in_2 := GenerateSk()
 	pkIn_2 := GeneratePk(sk_in_2)
 	rho_in_2 := big.NewInt(1111).Bytes()
 	rand_in_2 := big.NewInt(2222).Bytes()
-	gammaIn_2 := zg.NewGamma(12, 5)
+	gammaIn_2 := zg.NewGamma(15, 1)
 	nIn_2 := GenerateNote(gammaIn_2, pkIn_2, rho_in_2, rand_in_2)
 
 	//new1 := zg.NewGamma(12, 5)
@@ -2152,8 +2234,18 @@ func main() {
 	///////Send register transactions
 	/////////////////
 
-	nodes[1].SendTransactionRegisterN(nodes[0].Address, nodes[2].Address, nodes[2].ID, globalCCSOneCoin, globalPKOneCoin, globalVKOneCoin, globalCCSRegister, globalPKRegister, globalVKRegister, nBase_1, sk_base_1 /*new1,*/, pkIn_1, gammaIn_1, pkOut_1, sk_in_1, bid_1, nIn_1, true)
-	nodes[2].SendTransactionRegisterN(nodes[0].Address, nodes[1].Address, nodes[1].ID, globalCCSOneCoin, globalPKOneCoin, globalVKOneCoin, globalCCSRegister, globalPKRegister, globalVKRegister, nBase_2, sk_base_2 /*new1,*/, pkIn_2, gammaIn_2, pkOut_2, sk_in_2, bid_2, nIn_2, true)
+	nodes[1].SendTransactionRegisterN(nodes[0].Address, nodes[3].Address, nodes[3].ID, globalCCSOneCoin, globalPKOneCoin, globalVKOneCoin, globalCCSRegister, globalPKRegister, globalVKRegister, nBase_1, sk_base_1 /*new1,*/, pkIn_1, gammaIn_1, pkOut_1, sk_in_1, bid_1, nIn_1, true)
+	nodes[2].SendTransactionRegisterN(nodes[0].Address, nodes[3].Address, nodes[3].ID, globalCCSOneCoin, globalPKOneCoin, globalVKOneCoin, globalCCSRegister, globalPKRegister, globalVKRegister, nBase_2, sk_base_2 /*new1,*/, pkIn_2, gammaIn_2, pkOut_2, sk_in_2, bid_2, nIn_2, true)
+
+	time.Sleep(4 * time.Second)
+
+	nodes[3].Auction(TxListTemp, AuxList)
+
+	/////////////////
+	///////Auction phase
+	/////////////////
+
+	//Auction()
 
 	//nodes[1].SendTransactionRegisterN(nodes[0].Address, nodes[2].Address, nodes[2].ID, globalCCSOneCoin, globalPKOneCoin, globalVKOneCoin, globalCCSRegister, globalPKRegister, globalVKRegister, nBase, sk_base /*new1,*/, pkIn, gammaIn, pkOut, sk_in, bid, nIn, true)
 

@@ -113,7 +113,7 @@ func EncZK(api frontend.API, pk, coins, energy, rho, rand, cm frontend.Variable,
 }
 */
 
-func BuildEncMimc(EncKey bls12377.G1Affine, pk []byte, coins, energy, rho, rand *big.Int, cm []byte) []bls12377_fp.Element {
+func BuildEncMimc(EncKey bls12377.G1Affine, pk []byte, coins, energy, rho, rand *big.Int, cm []byte) [6]bls12377_fp.Element {
 
 	pk_int := new(big.Int).SetBytes(pk[:])
 
@@ -182,7 +182,262 @@ func BuildEncMimc(EncKey bls12377.G1Affine, pk []byte, coins, energy, rho, rand 
 	cm_ := new(bls12377_fp.Element).SetBigInt(new(big.Int).SetBytes(cm[:]))
 	cm_enc := new(bls12377_fp.Element).Add(cm_, new(bls12377_fp.Element).SetBigInt(new(big.Int).SetBytes(h_h_h_h_h_h_enc_key[:])))
 
-	return []bls12377_fp.Element{*pk_enc, *coins_enc, *energy_enc, *rho_enc, *rand_enc, *cm_enc}
+	return [6]bls12377_fp.Element{*pk_enc, *coins_enc, *energy_enc, *rho_enc, *rand_enc, *cm_enc}
+}
+
+type DecryptedValues struct {
+	PK     []byte   // La valeur initiale utilisée pour "pk"
+	Coins  *big.Int // La valeur initiale de "coins"
+	Energy *big.Int // La valeur initiale de "energy"
+	Rho    *big.Int // La valeur initiale de "rho"
+	Rand   *big.Int // La valeur initiale de "rand"
+	Cm     []byte   // La valeur initiale de "cm"
+}
+
+func BuildDecMimc(EncKey bls12377.G1Affine, ciphertext [6]bls12377_fp.Element) (*DecryptedValues, error) {
+	// On suppose que ciphertext contient 6 éléments dans l'ordre :
+	// [0]: chiffrement de pk, [1]: coins, [2]: energy, [3]: rho, [4]: rand, [5]: cm
+
+	// Pour recréer exactement les mêmes masques, on procède comme dans BuildEncMimc.
+	// On commence par récupérer EncKey.X et EncKey.Y sous forme de slice.
+	EncKeyXArray := EncKey.X.Bytes() // par exemple, type [48]byte
+	EncKeyXSlice := EncKeyXArray[:]  // conversion en slice
+	EncKeyXBytes := make([]byte, len(EncKeyXSlice))
+	copy(EncKeyXBytes, EncKeyXSlice)
+
+	EncKeyYArray := EncKey.Y.Bytes()
+	EncKeyYSlice := EncKeyYArray[:]
+	EncKeyYBytes := make([]byte, len(EncKeyYSlice))
+	copy(EncKeyYBytes, EncKeyYSlice)
+
+	// // Calcul de h_enc_key
+	// h1 := mimc_bw6_761.NewMiMC()
+	// h1.Write(EncKeyXBytes)
+	// h1.Write(EncKeyYBytes)
+	// h_enc_key := h1.Sum(nil)
+
+	// // Calcul de h_h_enc_key
+	// h2 := mimc_bw6_761.NewMiMC()
+	// h2.Write(h_enc_key)
+	// h_h_enc_key := h2.Sum(nil)
+
+	// // Calcul de h_h_h_enc_key
+	// h3 := mimc_bw6_761.NewMiMC()
+	// h3.Write(h_h_enc_key)
+	// h_h_h_enc_key := h3.Sum(nil)
+
+	// // Calcul de h_h_h_h_enc_key
+	// h4 := mimc_bw6_761.NewMiMC()
+	// h4.Write(h_h_h_enc_key)
+	// h_h_h_h_enc_key := h4.Sum(nil)
+
+	// // Calcul de h_h_h_h_h_enc_key
+	// h5 := mimc_bw6_761.NewMiMC()
+	// h5.Write(h_h_h_h_enc_key)
+	// h_h_h_h_h_enc_key := h5.Sum(nil)
+
+	// // Calcul de h_h_h_h_h_h_enc_key
+	// h6 := mimc_bw6_761.NewMiMC()
+	// h6.Write(h_h_h_h_h_enc_key)
+	// h_h_h_h_h_h_enc_key := h6.Sum(nil)
+
+	// Calcul de h_enc_key
+	h := mimc_bw6_761.NewMiMC()
+	h.Write(EncKeyXBytes)
+	h.Write(EncKeyYBytes)
+	h_enc_key := h.Sum(nil)
+
+	// Calcul de h_h_enc_key
+	//h := mimc_bw6_761.NewMiMC()
+	h.Write(h_enc_key)
+	h_h_enc_key := h.Sum(nil)
+
+	// Calcul de h_h_h_enc_key
+	//h := mimc_bw6_761.NewMiMC()
+	h.Write(h_h_enc_key)
+	h_h_h_enc_key := h.Sum(nil)
+
+	// Calcul de h_h_h_h_enc_key
+	//h := mimc_bw6_761.NewMiMC()
+	h.Write(h_h_h_enc_key)
+	h_h_h_h_enc_key := h.Sum(nil)
+
+	// Calcul de h_h_h_h_h_enc_key
+	//h := mimc_bw6_761.NewMiMC()
+	h.Write(h_h_h_h_enc_key)
+	h_h_h_h_h_enc_key := h.Sum(nil)
+
+	// Calcul de h_h_h_h_h_h_enc_key
+	//h := mimc_bw6_761.NewMiMC()
+	h.Write(h_h_h_h_h_enc_key)
+	h_h_h_h_h_h_enc_key := h.Sum(nil)
+
+	// Pour déchiffrer, on soustrait le masque à l'élément chiffré.
+	// On utilise la méthode Sub des éléments du corps fini (bls12377_fp.Element).
+
+	// Déchiffrer pk
+	maskPK := new(bls12377_fp.Element).SetBigInt(new(big.Int).SetBytes(h_enc_key))
+	plainPkElem := new(bls12377_fp.Element).Sub(&ciphertext[0], maskPK)
+	plainPK := plainPkElem.Bytes()
+
+	// Déchiffrer coins
+	maskCoins := new(bls12377_fp.Element).SetBigInt(new(big.Int).SetBytes(h_h_enc_key))
+	plainCoinsElem := new(bls12377_fp.Element).Sub(&ciphertext[1], maskCoins)
+	plainCoinsElemBytes := plainCoinsElem.Bytes()
+	plainCoins := new(big.Int).SetBytes(plainCoinsElemBytes[:])
+
+	// Déchiffrer energy
+	maskEnergy := new(bls12377_fp.Element).SetBigInt(new(big.Int).SetBytes(h_h_h_enc_key))
+	plainEnergyElem := new(bls12377_fp.Element).Sub(&ciphertext[2], maskEnergy)
+	plainEnergyElemBytes := plainEnergyElem.Bytes()
+	plainEnergy := new(big.Int).SetBytes(plainEnergyElemBytes[:])
+
+	// Déchiffrer rho
+	maskRho := new(bls12377_fp.Element).SetBigInt(new(big.Int).SetBytes(h_h_h_h_enc_key))
+	plainRhoElem := new(bls12377_fp.Element).Sub(&ciphertext[3], maskRho)
+	plainRhoElemBytes := plainRhoElem.Bytes()
+	plainRho := new(big.Int).SetBytes(plainRhoElemBytes[:])
+
+	// Déchiffrer rand
+	maskRand := new(bls12377_fp.Element).SetBigInt(new(big.Int).SetBytes(h_h_h_h_h_enc_key))
+	plainRandElem := new(bls12377_fp.Element).Sub(&ciphertext[4], maskRand)
+	plainRandElemBytes := plainRandElem.Bytes()
+	plainRand := new(big.Int).SetBytes(plainRandElemBytes[:])
+
+	// Déchiffrer cm
+	maskCm := new(bls12377_fp.Element).SetBigInt(new(big.Int).SetBytes(h_h_h_h_h_h_enc_key))
+	plainCmElem := new(bls12377_fp.Element).Sub(&ciphertext[5], maskCm)
+	plainCm := plainCmElem.Bytes()
+
+	return &DecryptedValues{
+		PK:     plainPK[:],
+		Coins:  plainCoins,
+		Energy: plainEnergy,
+		Rho:    plainRho,
+		Rand:   plainRand,
+		Cm:     plainCm[:],
+	}, nil
+}
+
+// RegDecryptedValues contient les valeurs déchiffrées issues de BuildEncRegMimc.
+type RegDecryptedValues struct {
+	// Pour pk_out et skIn, l’encodage était réalisé en convertissant d’abord en big.Int puis en Field Element.
+	// Ici, on restitue les bytes d'origine pour pk_out et skIn.
+	PK     []byte   // valeur initiale de pk_out
+	SkIn   []byte   // valeur initiale de skIn
+	Bid    *big.Int // valeur initiale de bid
+	Coins  *big.Int // valeur initiale de gammaIn.Coins
+	Energy *big.Int // valeur initiale de gammaIn.Energy
+}
+
+// BuildDecRegMimc réalise l'opération inverse de BuildEncRegMimc.
+// ciphertext doit être un slice de 5 éléments dans l'ordre :
+// [0]: chiffrement de pk_out, [1]: chiffrement de skIn, [2]: chiffrement de bid,
+// [3]: chiffrement de gammaIn.Coins, [4]: chiffrement de gammaIn.Energy.
+func BuildDecRegMimc(EncKey bls12377.G1Affine, ciphertext []bls12377_fp.Element) (*RegDecryptedValues, error) {
+	// On récupère EncKey.X et EncKey.Y en slices.
+	EncKeyXArray := EncKey.X.Bytes() // retourne [48]byte, par exemple
+	EncKeyXSlice := EncKeyXArray[:]  // conversion en []byte
+	EncKeyXBytes := make([]byte, len(EncKeyXSlice))
+	copy(EncKeyXBytes, EncKeyXSlice)
+
+	EncKeyYArray := EncKey.Y.Bytes()
+	EncKeyYSlice := EncKeyYArray[:]
+	EncKeyYBytes := make([]byte, len(EncKeyYSlice))
+	copy(EncKeyYBytes, EncKeyYSlice)
+
+	// Calculer les masques identiques à BuildEncRegMimc.
+	// 1) h_enc_key = H(EncKeyXBytes || EncKeyYBytes)
+	// h1 := mimc_bw6_761.NewMiMC()
+	// h1.Write(EncKeyXBytes)
+	// h1.Write(EncKeyYBytes)
+	// h_enc_key := h1.Sum(nil)
+
+	// // 2) h_h_enc_key = H(h_enc_key)
+	// h2 := mimc_bw6_761.NewMiMC()
+	// h2.Write(h_enc_key)
+	// h_h_enc_key := h2.Sum(nil)
+
+	// // 3) h_h_h_enc_key = H(h_h_enc_key)
+	// h3 := mimc_bw6_761.NewMiMC()
+	// h3.Write(h_h_enc_key)
+	// h_h_h_enc_key := h3.Sum(nil)
+
+	// // 4) h_h_h_h_enc_key = H(h_h_h_enc_key)
+	// h4 := mimc_bw6_761.NewMiMC()
+	// h4.Write(h_h_h_enc_key)
+	// h_h_h_h_enc_key := h4.Sum(nil)
+
+	// // 5) h_h_h_h_h_enc_key = H(h_h_h_h_enc_key)
+	// h5 := mimc_bw6_761.NewMiMC()
+	// h5.Write(h_h_h_h_enc_key)
+	// h_h_h_h_h_enc_key := h5.Sum(nil)
+
+	h := mimc_bw6_761.NewMiMC()
+	h.Write(EncKeyXBytes)
+	h.Write(EncKeyYBytes)
+	h_enc_key := h.Sum(nil)
+
+	// 2) h_h_enc_key = H(h_enc_key)
+	//h := mimc_bw6_761.NewMiMC()
+	h.Write(h_enc_key)
+	h_h_enc_key := h.Sum(nil)
+
+	// 3) h_h_h_enc_key = H(h_h_enc_key)
+	//h := mimc_bw6_761.NewMiMC()
+	h.Write(h_h_enc_key)
+	h_h_h_enc_key := h.Sum(nil)
+
+	// 4) h_h_h_h_enc_key = H(h_h_h_enc_key)
+	//h := mimc_bw6_761.NewMiMC()
+	h.Write(h_h_h_enc_key)
+	h_h_h_h_enc_key := h.Sum(nil)
+
+	// 5) h_h_h_h_h_enc_key = H(h_h_h_h_enc_key)
+	//h := mimc_bw6_761.NewMiMC()
+	h.Write(h_h_h_h_enc_key)
+	h_h_h_h_h_enc_key := h.Sum(nil)
+
+	// Déchiffrer chaque composante en soustrayant le masque correspondant.
+	// Pour obtenir la valeur initiale, on utilise : plaintext = ciphertext - masque.
+
+	// Déchiffrer pk_out
+	maskPK := new(bls12377_fp.Element).SetBigInt(new(big.Int).SetBytes(h_enc_key))
+	plainPkElem := new(bls12377_fp.Element).Sub(&ciphertext[0], maskPK)
+	plainPkElemBytes := plainPkElem.Bytes()
+	plainPK := plainPkElemBytes[:] // conversion en slice
+
+	// Déchiffrer skIn
+	maskSkIn := new(bls12377_fp.Element).SetBigInt(new(big.Int).SetBytes(h_h_enc_key))
+	plainSkInElem := new(bls12377_fp.Element).Sub(&ciphertext[1], maskSkIn)
+	plainSkInElemBytes := plainSkInElem.Bytes()
+	plainSkIn := plainSkInElemBytes[:]
+
+	// Déchiffrer bid
+	maskBid := new(bls12377_fp.Element).SetBigInt(new(big.Int).SetBytes(h_h_h_enc_key))
+	plainBidElem := new(bls12377_fp.Element).Sub(&ciphertext[2], maskBid)
+	plainBidElemBytes := plainBidElem.Bytes()
+	plainBid := new(big.Int).SetBytes(plainBidElemBytes[:])
+
+	// Déchiffrer gammaIn.Coins
+	maskCoins := new(bls12377_fp.Element).SetBigInt(new(big.Int).SetBytes(h_h_h_h_enc_key))
+	plainCoinsElem := new(bls12377_fp.Element).Sub(&ciphertext[3], maskCoins)
+	plainCoinsElemBytes := plainCoinsElem.Bytes()
+	plainCoins := new(big.Int).SetBytes(plainCoinsElemBytes[:])
+
+	// Déchiffrer gammaIn.Energy
+	maskEnergy := new(bls12377_fp.Element).SetBigInt(new(big.Int).SetBytes(h_h_h_h_h_enc_key))
+	plainEnergyElem := new(bls12377_fp.Element).Sub(&ciphertext[4], maskEnergy)
+	plainEnergyElemBytes := plainEnergyElem.Bytes()
+	plainEnergy := new(big.Int).SetBytes(plainEnergyElemBytes[:])
+
+	return &RegDecryptedValues{
+		PK:     plainPK,
+		SkIn:   plainSkIn,
+		Bid:    plainBid,
+		Coins:  plainCoins,
+		Energy: plainEnergy,
+	}, nil
 }
 
 type TxProverInputHighLevelDefaultOneCoin struct {
