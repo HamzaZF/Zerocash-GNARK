@@ -103,6 +103,15 @@ type TxDefaultOneCoinPayload struct {
 	EncVal        [6]bls12377_fp.Element
 }
 
+type AuctionResult struct {
+	TxOut TxDefaultOneCoinPayload
+	TxF1  TxF1Payload
+}
+
+type TxF1Payload struct {
+	Proof []byte
+}
+
 type DHRequestPayload struct {
 	SenderID int // ID de l'émetteur de la transaction
 }

@@ -20,6 +20,9 @@ import (
 
 	"github.com/consensys/gnark-crypto/ecc"
 	bls12377 "github.com/consensys/gnark-crypto/ecc/bls12-377"
+
+	//"github.com/consensys/gnark-crypto/ecc/bn254/fp"
+	bls12377_fp "github.com/consensys/gnark-crypto/ecc/bls12-377/fp"
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 	"github.com/consensys/gnark/backend/groth16"
 	"github.com/consensys/gnark/frontend"
@@ -390,236 +393,236 @@ func GeneratePk(sk []byte) []byte {
 	return h.Sum(nil)
 }
 
-func (n *Node) SendTransactionRegister(validatorAddress string, targetAddress string, targetID int, globalCCS, globalCCSRegister constraint.ConstraintSystem, globalPK, globalPKRegister groth16.ProvingKey, globalVK, globalVKRegister groth16.VerifyingKey, kind bool) error {
+// func (n *Node) SendTransactionRegister(validatorAddress string, targetAddress string, targetID int, globalCCS, globalCCSRegister constraint.ConstraintSystem, globalPK, globalPKRegister groth16.ProvingKey, globalVK, globalVKRegister groth16.VerifyingKey, kind bool) error {
 
-	conn, err := net.Dial("tcp", validatorAddress)
-	if err != nil {
-		n.logger.Error().Err(err).Msgf("%s[Node %d] [Transaction] Error dialing %s\033[0m", getNodeColor(n.ID), n.ID, validatorAddress)
-		return err
-	}
-	defer conn.Close()
+// 	conn, err := net.Dial("tcp", validatorAddress)
+// 	if err != nil {
+// 		n.logger.Error().Err(err).Msgf("%s[Node %d] [Transaction] Error dialing %s\033[0m", getNodeColor(n.ID), n.ID, validatorAddress)
+// 		return err
+// 	}
+// 	defer conn.Close()
 
-	//compute PkBase
-	sk_base, _ := zg.GenerateBls12377_frElement()
-	sk_base_bytes := sk_base.Bytes()
-	h := mimcNative.NewMiMC()
-	h.Write(sk_base_bytes[:])
-	pkBase := h.Sum(nil)
-	skBase := sk_base_bytes[:]
+// 	//compute PkBase
+// 	sk_base, _ := zg.GenerateBls12377_frElement()
+// 	sk_base_bytes := sk_base.Bytes()
+// 	h := mimcNative.NewMiMC()
+// 	h.Write(sk_base_bytes[:])
+// 	pkBase := h.Sum(nil)
+// 	skBase := sk_base_bytes[:]
 
-	//compute PkIn
-	sk_in, _ := zg.GenerateBls12377_frElement()
-	sk_in_bytes := sk_in.Bytes()
-	h = mimcNative.NewMiMC()
-	h.Write(sk_in_bytes[:])
-	pkIn := h.Sum(nil)
-	skIn := sk_in_bytes[:]
+// 	//compute PkIn
+// 	sk_in, _ := zg.GenerateBls12377_frElement()
+// 	sk_in_bytes := sk_in.Bytes()
+// 	h = mimcNative.NewMiMC()
+// 	h.Write(sk_in_bytes[:])
+// 	pkIn := h.Sum(nil)
+// 	skIn := sk_in_bytes[:]
 
-	//compute PkOut
-	sk_out, _ := zg.GenerateBls12377_frElement()
-	sk_out_bytes := sk_out.Bytes()
-	h = mimcNative.NewMiMC()
-	h.Write(sk_out_bytes[:])
-	pkOut := h.Sum(nil)
-	skOut := sk_out_bytes[:]
-	fmt.Println("skOut[0]: ", skOut[0])
+// 	//compute PkOut
+// 	sk_out, _ := zg.GenerateBls12377_frElement()
+// 	sk_out_bytes := sk_out.Bytes()
+// 	h = mimcNative.NewMiMC()
+// 	h.Write(sk_out_bytes[:])
+// 	pkOut := h.Sum(nil)
+// 	skOut := sk_out_bytes[:]
+// 	fmt.Println("skOut[0]: ", skOut[0])
 
-	nBase := zg.Note{
-		Value:   zg.NewGamma(12, 5),
-		PkOwner: pkBase,
-		Rho:     big.NewInt(1111).Bytes(),
-		Rand:    big.NewInt(2222).Bytes(),
-	}
-	nBase.Cm = zg.Committment(nBase.Value.Coins, nBase.Value.Energy, big.NewInt(1111), big.NewInt(2222))
+// 	nBase := zg.Note{
+// 		Value:   zg.NewGamma(12, 5),
+// 		PkOwner: pkBase,
+// 		Rho:     big.NewInt(1111).Bytes(),
+// 		Rand:    big.NewInt(2222).Bytes(),
+// 	}
+// 	nBase.Cm = zg.Committment(nBase.Value.Coins, nBase.Value.Energy, big.NewInt(1111), big.NewInt(2222))
 
-	//2 new notes
-	new1 := zg.NewGamma(12, 5)
+// 	//2 new notes
+// 	new1 := zg.NewGamma(12, 5)
 
-	// //Compute pkNew1
-	// sk_new_1, _ := zg.GenerateBls12377_frElement()
-	// sk_new_1_bytes := sk_new_1.Bytes()
-	// h = mimcNative.NewMiMC()
-	// h.Write(sk_new_1_bytes[:])
-	// pkNew1 := h.Sum(nil)
+// 	// //Compute pkNew1
+// 	// sk_new_1, _ := zg.GenerateBls12377_frElement()
+// 	// sk_new_1_bytes := sk_new_1.Bytes()
+// 	// h = mimcNative.NewMiMC()
+// 	// h.Write(sk_new_1_bytes[:])
+// 	// pkNew1 := h.Sum(nil)
 
-	// 3) Build TxProverInputHighLevel
-	inp := zg.TxProverInputHighLevelDefaultOneCoin{
-		OldNote: nBase,
-		OldSk:   skBase,
-		NewVal:  new1,
-		NewPk:   pkIn,
-		EncKey:  n.DHExchanges[targetID].SharedSecret,
-		R:       n.DHExchanges[targetID].Secret,
-		//B:        b_bytes[:],
-		G:   n.G,
-		G_b: n.DHExchanges[targetID].PartnerPublic,
-		G_r: n.DHExchanges[targetID].EphemeralPublic,
-	}
+// 	// 3) Build TxProverInputHighLevel
+// 	inp := zg.TxProverInputHighLevelDefaultOneCoin{
+// 		OldNote: nBase,
+// 		OldSk:   skBase,
+// 		NewVal:  new1,
+// 		NewPk:   pkIn,
+// 		EncKey:  n.DHExchanges[targetID].SharedSecret,
+// 		R:       n.DHExchanges[targetID].Secret,
+// 		//B:        b_bytes[:],
+// 		G:   n.G,
+// 		G_b: n.DHExchanges[targetID].PartnerPublic,
+// 		G_r: n.DHExchanges[targetID].EphemeralPublic,
+// 	}
 
-	gammaIn := zg.NewGamma(12, 5)
-	nIn := zg.Note{
-		Value:   gammaIn,
-		PkOwner: pkIn,
-		Rho:     big.NewInt(1111).Bytes(),
-		Rand:    big.NewInt(2222).Bytes(),
-	}
-	nIn.Cm = zg.Committment(nIn.Value.Coins, nIn.Value.Energy, big.NewInt(1111), big.NewInt(2222))
+// 	gammaIn := zg.NewGamma(12, 5)
+// 	nIn := zg.Note{
+// 		Value:   gammaIn,
+// 		PkOwner: pkIn,
+// 		Rho:     big.NewInt(1111).Bytes(),
+// 		Rand:    big.NewInt(2222).Bytes(),
+// 	}
+// 	nIn.Cm = zg.Committment(nIn.Value.Coins, nIn.Value.Energy, big.NewInt(1111), big.NewInt(2222))
 
-	//Encrypt [gammaIn, bid, skIn, pkOut]
+// 	//Encrypt [gammaIn, bid, skIn, pkOut]
 
-	/*
-		// Send "DH_G_r" containing A.
-		dhPayload := zn.DHPayload{
-			ID:      n.ID,
-			SubType: "DH_G_r",
-			Value:   A,
-		}
-		msg := zn.PackMessage("DiffieHellman", dhPayload)
-		if err := zn.SendMessage(conn, msg); err != nil {
-			n.logger.Error().Err(err).Msg("Erreur lors de l'envoi de DH_G_r")
-			return err
-		}
-		n.logger.Info().Msg("DH_G_r envoyé avec succès.")
-	*/
+// 	/*
+// 		// Send "DH_G_r" containing A.
+// 		dhPayload := zn.DHPayload{
+// 			ID:      n.ID,
+// 			SubType: "DH_G_r",
+// 			Value:   A,
+// 		}
+// 		msg := zn.PackMessage("DiffieHellman", dhPayload)
+// 		if err := zn.SendMessage(conn, msg); err != nil {
+// 			n.logger.Error().Err(err).Msg("Erreur lors de l'envoi de DH_G_r")
+// 			return err
+// 		}
+// 		n.logger.Info().Msg("DH_G_r envoyé avec succès.")
+// 	*/
 
-	//SEND TX
+// 	//SEND TX
 
-	////////////////////////
+// 	////////////////////////
 
-	// var rhoNew *big.Int
-	// var randNew *big.Int
+// 	// var rhoNew *big.Int
+// 	// var randNew *big.Int
 
-	// rhoNew = zg.RandBigInt()
-	// randNew = zg.RandBigInt()
-	bid := zg.RandBigInt()
+// 	// rhoNew = zg.RandBigInt()
+// 	// randNew = zg.RandBigInt()
+// 	bid := zg.RandBigInt()
 
-	encVal := zg.BuildEncRegMimc(inp.EncKey, gammaIn, pkOut, skIn, bid)
-	fmt.Println("Eh pourtant: ", encVal)
+// 	encVal := zg.BuildEncRegMimc(inp.EncKey, gammaIn, pkOut, skIn, bid)
+// 	fmt.Println("Eh pourtant: ", encVal)
 
-	///{*pk_enc, *skIn_enc, *bid_enc, *coins_enc, *energy_enc}
+// 	///{*pk_enc, *skIn_enc, *bid_enc, *coins_enc, *energy_enc}
 
-	// get pk_out_enc
-	pk_enc := encVal[0].Bytes()
-	pk_enc_bytes := make([]byte, len(pk_enc))
-	copy(pk_enc_bytes, pk_enc[:])
-	//cNew.PkOwner = pk_enc_bytes
+// 	// get pk_out_enc
+// 	pk_enc := encVal[0].Bytes()
+// 	pk_enc_bytes := make([]byte, len(pk_enc))
+// 	copy(pk_enc_bytes, pk_enc[:])
+// 	//cNew.PkOwner = pk_enc_bytes
 
-	// get coins_enc
-	coins_enc := encVal[3].Bytes()
-	coins_enc_bytes := make([]byte, len(coins_enc))
-	copy(coins_enc_bytes, coins_enc[:])
-	//cNew.Value.Coins = new(big.Int).SetBytes(coins_enc_bytes)
+// 	// get coins_enc
+// 	coins_enc := encVal[3].Bytes()
+// 	coins_enc_bytes := make([]byte, len(coins_enc))
+// 	copy(coins_enc_bytes, coins_enc[:])
+// 	//cNew.Value.Coins = new(big.Int).SetBytes(coins_enc_bytes)
 
-	// get energy_enc
-	energy_enc := encVal[4].Bytes()
-	energy_enc_bytes := make([]byte, len(energy_enc))
-	copy(energy_enc_bytes, energy_enc[:])
-	//cNew.Value.Energy = new(big.Int).SetBytes(energy_enc_bytes)
+// 	// get energy_enc
+// 	energy_enc := encVal[4].Bytes()
+// 	energy_enc_bytes := make([]byte, len(energy_enc))
+// 	copy(energy_enc_bytes, energy_enc[:])
+// 	//cNew.Value.Energy = new(big.Int).SetBytes(energy_enc_bytes)
 
-	// get skIn_enc
-	skIn_enc := encVal[1].Bytes()
-	skIn_enc_bytes := make([]byte, len(skIn_enc))
-	copy(skIn_enc_bytes, skIn_enc[:])
-	//cNew.Rho = skIn_enc_bytes
+// 	// get skIn_enc
+// 	skIn_enc := encVal[1].Bytes()
+// 	skIn_enc_bytes := make([]byte, len(skIn_enc))
+// 	copy(skIn_enc_bytes, skIn_enc[:])
+// 	//cNew.Rho = skIn_enc_bytes
 
-	// get bid_enc
-	bid_enc := encVal[2].Bytes()
-	bid_enc_bytes := make([]byte, len(bid_enc))
-	copy(bid_enc_bytes, bid_enc[:])
-	//cNew.Rand = rand_enc_bytes
+// 	// get bid_enc
+// 	bid_enc := encVal[2].Bytes()
+// 	bid_enc_bytes := make([]byte, len(bid_enc))
+// 	copy(bid_enc_bytes, bid_enc[:])
+// 	//cNew.Rand = rand_enc_bytes
 
-	inp_reg := zg.TxProverInputHighLevelRegister{
-		InCoin:   big.NewInt(12).Bytes(),
-		InEnergy: big.NewInt(5).Bytes(),
-		CmIn:     nIn.Cm,
-		CAux:     [5][]byte{pk_enc_bytes, skIn_enc_bytes, bid_enc_bytes, coins_enc_bytes, energy_enc_bytes},
-		SkIn:     skIn,
-		PkIn:     pkIn,
-		PkOut:    pkOut,
-		Bid:      bid.Bytes(),
-		RhoIn:    big.NewInt(1111).Bytes(),
-		RandIn:   big.NewInt(2222).Bytes(),
-		InVal:    gammaIn,
-		EncKey:   n.DHExchanges[targetID].SharedSecret,
-		R:        n.DHExchanges[targetID].Secret,
-		//B:        b_bytes[:],
-		G:   n.G,
-		G_b: n.DHExchanges[targetID].PartnerPublic,
-		G_r: n.DHExchanges[targetID].EphemeralPublic,
-	}
+// 	inp_reg := zg.TxProverInputHighLevelRegister{
+// 		InCoin:   big.NewInt(12).Bytes(),
+// 		InEnergy: big.NewInt(5).Bytes(),
+// 		CmIn:     nIn.Cm,
+// 		CAux:     [5][]byte{pk_enc_bytes, skIn_enc_bytes, bid_enc_bytes, coins_enc_bytes, energy_enc_bytes},
+// 		SkIn:     skIn,
+// 		PkIn:     pkIn,
+// 		PkOut:    pkOut,
+// 		Bid:      bid.Bytes(),
+// 		RhoIn:    big.NewInt(1111).Bytes(),
+// 		RandIn:   big.NewInt(2222).Bytes(),
+// 		InVal:    gammaIn,
+// 		EncKey:   n.DHExchanges[targetID].SharedSecret,
+// 		R:        n.DHExchanges[targetID].Secret,
+// 		//B:        b_bytes[:],
+// 		G:   n.G,
+// 		G_b: n.DHExchanges[targetID].PartnerPublic,
+// 		G_r: n.DHExchanges[targetID].EphemeralPublic,
+// 	}
 
-	//tx := TransactionOneCoin(inp, globalCCS, globalPK, conn, n.ID, targetAddress, targetID)
-	fmt.Println("AVANT")
-	tx := TransactionOneCoin(inp, globalCCSOneCoin, globalPKOneCoin, conn, n.ID, targetAddress, targetID)
-	fmt.Println("APRES")
+// 	//tx := TransactionOneCoin(inp, globalCCS, globalPK, conn, n.ID, targetAddress, targetID)
+// 	fmt.Println("AVANT")
+// 	//tx := TransactionOneCoin(inp, globalCCSOneCoin, globalPKOneCoin, conn, n.ID, targetAddress, targetID)
+// 	fmt.Println("APRES")
 
-	//fmt.Println("tx_encapsulated: ", tx_encapsulated)
+// 	//fmt.Println("tx_encapsulated: ", tx_encapsulated)
 
-	//PI_reg := ProofRegister(inp_reg, globalCCSRegister, globalPKRegister, conn, n.ID, targetAddress, targetID)
-	///PI_reg := ProofRegister(inp_reg, globalCCSRegister, globalPKRegister, conn, n.ID, targetAddress, targetID)
+// 	//PI_reg := ProofRegister(inp_reg, globalCCSRegister, globalPKRegister, conn, n.ID, targetAddress, targetID)
+// 	///PI_reg := ProofRegister(inp_reg, globalCCSRegister, globalPKRegister, conn, n.ID, targetAddress, targetID)
 
-	piReg, pubReg, Ip, err := ProofRegister(inp_reg, globalCCSRegister, globalPKRegister)
-	if err != nil {
-		fmt.Printf("Error generating register proof: %v\n", err)
-		return err
-	}
+// 	piReg, pubReg, Ip, err := ProofRegister(inp_reg, globalCCSRegister, globalPKRegister)
+// 	if err != nil {
+// 		fmt.Printf("Error generating register proof: %v\n", err)
+// 		return err
+// 	}
 
-	tx_encapsulated := zn.TxEncapsulated{
-		Kind:    1, //0 for default, 1 for one coin
-		Payload: tx,
-	}
+// 	tx_encapsulated := zn.TxEncapsulated{
+// 		Kind:    1, //0 for default, 1 for one coin
+// 		Payload: tx,
+// 	}
 
-	txReg := zn.TxRegister{
-		TxIn:      tx_encapsulated,
-		CmIn:      inp_reg.CmIn,
-		PiReg:     piReg,
-		PubW:      pubReg,
-		Ip:        Ip,
-		AuxCipher: [5][]byte{pk_enc_bytes, skIn_enc_bytes, bid_enc_bytes, coins_enc_bytes, energy_enc_bytes},
-		EncVal:    encVal,
-	}
+// 	txReg := zn.TxRegister{
+// 		TxIn:      tx_encapsulated,
+// 		CmIn:      inp_reg.CmIn,
+// 		PiReg:     piReg,
+// 		PubW:      pubReg,
+// 		Ip:        Ip,
+// 		AuxCipher: [5][]byte{pk_enc_bytes, skIn_enc_bytes, bid_enc_bytes, coins_enc_bytes, energy_enc_bytes},
+// 		EncVal:    encVal,
+// 	}
 
-	//send
+// 	//send
 
-	msg := zn.PackMessage("register", txReg)
-	if err := zn.SendMessage(conn, msg); err != nil {
-		fmt.Printf("%s[Node %d] [Transaction] Error sending transaction: %v\033[0m\n", getNodeColor(n.ID), n.ID, err)
-		return nil
-	} else {
-		fmt.Printf("%s[Node %d] [Transaction] Transaction sent successfully for validation\033[0m\n", getNodeColor(n.ID), n.ID)
-	}
+// 	msg := zn.PackMessage("register", txReg)
+// 	if err := zn.SendMessage(conn, msg); err != nil {
+// 		fmt.Printf("%s[Node %d] [Transaction] Error sending transaction: %v\033[0m\n", getNodeColor(n.ID), n.ID, err)
+// 		return nil
+// 	} else {
+// 		fmt.Printf("%s[Node %d] [Transaction] Transaction sent successfully for validation\033[0m\n", getNodeColor(n.ID), n.ID)
+// 	}
 
-	////////////////////////
+// 	////////////////////////
 
-	// msg := zn.PackMessage("tx", tx_encapsulated)
-	// if err := zn.SendMessage(conn, msg); err != nil {
-	// 	fmt.Printf("%s[Node %d] [Transaction] Error sending transaction: %v\033[0m\n", getNodeColor(n.ID), n.ID, err)
-	// 	return nil
-	// }
+// 	// msg := zn.PackMessage("tx", tx_encapsulated)
+// 	// if err := zn.SendMessage(conn, msg); err != nil {
+// 	// 	fmt.Printf("%s[Node %d] [Transaction] Error sending transaction: %v\033[0m\n", getNodeColor(n.ID), n.ID, err)
+// 	// 	return nil
+// 	// }
 
-	// n.logger.Info().Msg(fmt.Sprintf("%s[Node %d] [Transaction] Transaction sent successfully for validation\033[0m", getNodeColor(n.ID), n.ID))
+// 	// n.logger.Info().Msg(fmt.Sprintf("%s[Node %d] [Transaction] Transaction sent successfully for validation\033[0m", getNodeColor(n.ID), n.ID))
 
-	// Send the transaction
-	//msg := zn.PackMessage("tx", proof)
+// 	// Send the transaction
+// 	//msg := zn.PackMessage("tx", proof)
 
-	/*
-		// Send "DH_G_r" containing A.
-		dhPayload := zn.DHPayload{
-			ID:      n.ID,
-			SubType: "DH_G_r",
-			Value:   A,
-		}
-		msg := zn.PackMessage("DiffieHellman", dhPayload)
-		if err := zn.SendMessage(conn, msg); err != nil {
-			n.logger.Error().Err(err).Msg("Erreur lors de l'envoi de DH_G_r")
-			return err
-		}
-		n.logger.Info().Msg("DH_G_r envoyé avec succès.")
-	*/
+// 	/*
+// 		// Send "DH_G_r" containing A.
+// 		dhPayload := zn.DHPayload{
+// 			ID:      n.ID,
+// 			SubType: "DH_G_r",
+// 			Value:   A,
+// 		}
+// 		msg := zn.PackMessage("DiffieHellman", dhPayload)
+// 		if err := zn.SendMessage(conn, msg); err != nil {
+// 			n.logger.Error().Err(err).Msg("Erreur lors de l'envoi de DH_G_r")
+// 			return err
+// 		}
+// 		n.logger.Info().Msg("DH_G_r envoyé avec succès.")
+// 	*/
 
-	//
-	return nil
-}
+// 	//
+// 	return nil
+// }
 
 func (n *Node) SendTransactionRegisterN(
 	validatorAddress string,
@@ -656,6 +659,8 @@ func (n *Node) SendTransactionRegisterN(
 	}
 	defer conn.Close()
 
+	//c.PkOut, c.SkIn, c.Bid, c.GammaInCoins, c.GammaInEnergy, c.EncKey)
+
 	// Construction de l'input de la preuve pour une transaction one coin
 	inp := zg.TxProverInputHighLevelDefaultOneCoin{
 		OldNote: nBase,
@@ -672,6 +677,8 @@ func (n *Node) SendTransactionRegisterN(
 
 	// Appel de la fonction de chiffrement avec les paramètres requis
 	encVal := zg.BuildEncRegMimc(inp.EncKey, gammaIn, pkOut, skIn, bid)
+
+	//decVal, _ := zg.BuildDecRegMimc(inp.EncKey, encVal)
 
 	// Extraction et copie des différents éléments chiffrés
 	pk_enc := encVal[0].Bytes()
@@ -715,8 +722,16 @@ func (n *Node) SendTransactionRegisterN(
 		G_r: n.DHExchanges[targetID].EphemeralPublic,
 	}
 
+	/*
+		cm := zg.Committment(inp.NewVal.Coins, inp.NewVal.Energy,
+			rhoNew, randNew)
+	*/
+
+	rhoNew := zg.RandBigInt()
+	randNew := zg.RandBigInt()
+
 	// Construction de la transaction one coin
-	tx := TransactionOneCoin(inp, globalCCSOneCoin, globalPKOneCoin, conn, n.ID, targetAddress, targetID)
+	tx := TransactionOneCoin(inp, globalCCSOneCoin, globalPKOneCoin, conn, n.ID, targetAddress, targetID, rhoNew, randNew)
 
 	// Génération de la preuve d'enregistrement
 	piReg, pubReg, Ip, err := ProofRegister(inp_reg, globalCCSRegister, globalPKRegister)
@@ -738,7 +753,7 @@ func (n *Node) SendTransactionRegisterN(
 		PubW:      pubReg,
 		Ip:        Ip,
 		AuxCipher: [5][]byte{pk_enc_bytes, skIn_enc_bytes, bid_enc_bytes, coins_enc_bytes, energy_enc_bytes},
-		EncVal:    encVal,
+		EncVal:    encVal, //FALSE, TO REMOVE
 		Kind:      kind,
 	}
 
@@ -914,20 +929,20 @@ func Transaction(inp zg.TxProverInputHighLevel, globalCCS constraint.ConstraintS
 	}
 }
 
-func TransactionOneCoin(inp zg.TxProverInputHighLevelDefaultOneCoin, globalCCSOneCoin constraint.ConstraintSystem, globalPKOneCoin groth16.ProvingKey, conn net.Conn, ID int, targetAddress string, targetID int) zn.TxDefaultOneCoinPayload {
+func TransactionOneCoin(inp zg.TxProverInputHighLevelDefaultOneCoin, globalCCSOneCoin constraint.ConstraintSystem, globalPKOneCoin groth16.ProvingKey, conn net.Conn, ID int, targetAddress string, targetID int, rhoNew *big.Int, randNew *big.Int) zn.TxDefaultOneCoinPayload {
 	// 1) snOld[i] = MiMC(skOld[i], RhoOld[i]) off-circuit
 	var snOld []byte
 	sn := zg.CalcSerialMimc(inp.OldSk, inp.OldNote.Rho)
 	snOld = sn
 	// 2) Generate (rhoNew, randNew), cmNew, cNew
-	var rhoNew *big.Int
-	var randNew *big.Int
+	//var rhoNew *big.Int
+	//var randNew *big.Int
 	var cmNew []byte
 	//var cNew [2][][]byte
 	var cNew zg.Note
 
-	rhoNew = zg.RandBigInt()
-	randNew = zg.RandBigInt()
+	//rhoNew = zg.RandBigInt()
+	//randNew = zg.RandBigInt()
 	cm := zg.Committment(inp.NewVal.Coins, inp.NewVal.Energy,
 		rhoNew, randNew)
 	cmNew = cm
@@ -1064,6 +1079,257 @@ func TransactionOneCoin(inp zg.TxProverInputHighLevelDefaultOneCoin, globalCCSOn
 		TargetID:      targetID,
 		PublicWitness: pubBuf.Bytes(),
 		EncVal:        encVal,
+	}
+}
+
+func TransactionF1(inp zg.TxProverInputHighLevelF1, globalCCSF1 constraint.ConstraintSystem, globalPKF1 groth16.ProvingKey, conn net.Conn, ID int, targetAddress string, targetID int) zn.TxF1Payload {
+
+	// inp_c_0 := inp.C[0].Bytes()
+	// inp_c_1 := inp.C[1].Bytes()
+	// inp_c_2 := inp.C[2].Bytes()
+	// inp_c_3 := inp.C[3].Bytes()
+	// inp_c_4 := inp.C[4].Bytes()
+
+	// Extraction et copie des différents éléments chiffrés
+	pk_enc := inp.C[0].Bytes()
+	pk_enc_bytes := make([]byte, len(pk_enc))
+	copy(pk_enc_bytes, pk_enc[:])
+
+	coins_enc := inp.C[3].Bytes()
+	coins_enc_bytes := make([]byte, len(coins_enc))
+	copy(coins_enc_bytes, coins_enc[:])
+
+	energy_enc := inp.C[4].Bytes()
+	energy_enc_bytes := make([]byte, len(energy_enc))
+	copy(energy_enc_bytes, energy_enc[:])
+
+	skIn_enc := inp.C[1].Bytes()
+	skIn_enc_bytes := make([]byte, len(skIn_enc))
+	copy(skIn_enc_bytes, skIn_enc[:])
+
+	bid_enc := inp.C[2].Bytes()
+	bid_enc_bytes := make([]byte, len(bid_enc))
+	copy(bid_enc_bytes, bid_enc[:])
+
+	ip_ := zg.InputTxF1{
+		InCoin:   new(big.Int).SetBytes(inp.InCoin),
+		InEnergy: new(big.Int).SetBytes(inp.InEnergy),
+		InCm:     new(big.Int).SetBytes(inp.InCm),
+		InSn:     new(big.Int).SetBytes(inp.InSn),
+		InPk:     new(big.Int).SetBytes(inp.InPk),
+		InSk:     new(big.Int).SetBytes(inp.InSk),
+		InRho:    new(big.Int).SetBytes(inp.InRho),
+		InRand:   new(big.Int).SetBytes(inp.InRand),
+
+		OutCoin:   new(big.Int).SetBytes(inp.OutCoin),
+		OutEnergy: new(big.Int).SetBytes(inp.OutEnergy),
+		OutCm:     new(big.Int).SetBytes(inp.OutCm),
+		OutSn:     new(big.Int).SetBytes(inp.OutSn),
+		OutPk:     new(big.Int).SetBytes(inp.OutPk),
+		OutRho:    new(big.Int).SetBytes(inp.OutRho),
+		OutRand:   new(big.Int).SetBytes(inp.OutRand),
+
+		SkT: inp.SkT,
+		//SnIn:  new(big.Int).SetBytes(inp.SnIn),
+		//CmOut: new(big.Int).SetBytes(inp.CmOut),
+		//pk_enc_bytes, skIn_enc_bytes, bid_enc_bytes, coins_enc_bytes, energy_enc_bytes},
+		C: [5][]byte{
+			pk_enc_bytes,
+			skIn_enc_bytes,
+			bid_enc_bytes,
+			coins_enc_bytes,
+			energy_enc_bytes,
+			// new(big.Int).SetBytes(pk_enc_bytes),
+			// new(big.Int).SetBytes(coins_enc_bytes),
+			// new(big.Int).SetBytes(energy_enc_bytes),
+			// new(big.Int).SetBytes(skIn_enc_bytes),
+			// new(big.Int).SetBytes(bid_enc_bytes),
+		},
+		DecVal: inp.DecVal,
+		EncKey: inp.EncKey,
+
+		R:   new(big.Int).SetBytes(inp.R),
+		G:   inp.G,
+		G_b: inp.G_b,
+		G_r: inp.G_r,
+	}
+
+	c, err := ip_.BuildWitness()
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Println("CIRCUIT F1")
+
+	// fmt.Println("=ip_", ip_)
+
+	w, _ := frontend.NewWitness(c, ecc.BW6_761.ScalarField())
+
+	fmt.Println("GENERONS CETTE PREUVE")
+	// 4) Generate proof
+	_ = time.Now()
+	proof, err := groth16.Prove(globalCCSF1, globalPKF1, w)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println("PREUVE GENEREE")
+
+	var buf bytes.Buffer
+	proof.WriteTo(&buf)
+
+	// // 1) snOld[i] = MiMC(skOld[i], RhoOld[i]) off-circuit
+	// var snOld []byte
+	// sn := zg.CalcSerialMimc(inp.OldSk, inp.OldNote.Rho)
+	// snOld = sn
+	// // 2) Generate (rhoNew, randNew), cmNew, cNew
+	// var rhoNew *big.Int
+	// var randNew *big.Int
+	// var cmNew []byte
+	// //var cNew [2][][]byte
+	// var cNew zg.Note
+
+	// rhoNew = zg.RandBigInt()
+	// randNew = zg.RandBigInt()
+	// cm := zg.Committment(inp.NewVal.Coins, inp.NewVal.Energy,
+	// 	rhoNew, randNew)
+	// cmNew = cm
+	// encVal := zg.BuildEncMimc(inp.EncKey, inp.NewPk,
+	// 	inp.NewVal.Coins, inp.NewVal.Energy,
+	// 	rhoNew, randNew, cm)
+
+	// //ICI
+
+	// // get pk_enc
+	// pk_enc := encVal[0].Bytes()
+	// pk_enc_bytes := make([]byte, len(pk_enc))
+	// copy(pk_enc_bytes, pk_enc[:])
+	// cNew.PkOwner = pk_enc_bytes
+
+	// // get coins_enc
+	// coins_enc := encVal[1].Bytes()
+	// coins_enc_bytes := make([]byte, len(coins_enc))
+	// copy(coins_enc_bytes, coins_enc[:])
+	// cNew.Value.Coins = new(big.Int).SetBytes(coins_enc_bytes)
+
+	// // get energy_enc
+	// energy_enc := encVal[2].Bytes()
+	// energy_enc_bytes := make([]byte, len(energy_enc))
+	// copy(energy_enc_bytes, energy_enc[:])
+	// cNew.Value.Energy = new(big.Int).SetBytes(energy_enc_bytes)
+
+	// // get rho_enc
+	// rho_enc := encVal[3].Bytes()
+	// rho_enc_bytes := make([]byte, len(rho_enc))
+	// copy(rho_enc_bytes, rho_enc[:])
+	// cNew.Rho = rho_enc_bytes
+
+	// // get rand_enc
+	// rand_enc := encVal[4].Bytes()
+	// rand_enc_bytes := make([]byte, len(rand_enc))
+	// copy(rand_enc_bytes, rand_enc[:])
+	// cNew.Rand = rand_enc_bytes
+
+	// // get cm_enc
+	// cm_enc := encVal[5].Bytes()
+	// cm_enc_bytes := make([]byte, len(cm_enc))
+	// copy(cm_enc_bytes, cm_enc[:])
+	// cNew.Cm = cm_enc_bytes
+
+	// // 3) Build InputProver
+	// var ip zg.InputProverDefaultOneCoin
+	// // old
+	// ip.OldCoin = inp.OldNote.Value.Coins
+	// ip.OldEnergy = inp.OldNote.Value.Energy
+	// ip.CmOld = inp.OldNote.Cm
+	// ip.SnOld = snOld
+	// ip.PkOld = inp.OldNote.PkOwner
+
+	// ip.SkOld = new(big.Int).SetBytes(inp.OldSk)
+	// ip.RhoOld = new(big.Int).SetBytes(inp.OldNote.Rho)
+	// ip.RandOld = new(big.Int).SetBytes(inp.OldNote.Rand)
+	// // new
+	// ip.NewCoin = inp.NewVal.Coins
+	// ip.NewEnergy = inp.NewVal.Energy
+	// ip.CmNew = cmNew
+
+	// // pk
+
+	// // allocate with make
+	// ip.CNew = make([][]byte, 6)
+	// ip.CNew[0] = cNew.PkOwner
+
+	// // coins
+	// ip.CNew[1] = cNew.Value.Coins.Bytes()
+
+	// // energy
+	// ip.CNew[2] = cNew.Value.Energy.Bytes()
+
+	// // rho
+	// ip.CNew[3] = cNew.Rho
+
+	// // rand
+	// ip.CNew[4] = cNew.Rand
+
+	// // cm
+	// ip.CNew[5] = cNew.Cm
+
+	// ip.PkNew = new(big.Int).SetBytes(inp.NewPk)
+	// ip.RhoNew = rhoNew
+	// ip.RandNew = randNew
+
+	// ip.R = inp.R
+	// //ip.B = inp.B
+	// ip.G = inp.G
+	// ip.G_b = inp.G_b
+	// ip.G_r = inp.G_r
+	// ip.EncKey = inp.EncKey
+
+	// wc, _ := ip.BuildWitness()
+	// w, _ := frontend.NewWitness(wc, ecc.BW6_761.ScalarField())
+
+	// wPub, _ := w.Public()
+	// var pubBuf bytes.Buffer
+	// if _, err := wPub.WriteTo(&pubBuf); err != nil {
+	// 	panic(err)
+	// }
+
+	// // 4) Generate proof
+	// _ = time.Now()
+	// proof, err := groth16.Prove(globalCCSOneCoin, globalPKOneCoin, w)
+	// if err != nil {
+	// 	panic(err)
+	// }
+
+	// var buf bytes.Buffer
+	// proof.WriteTo(&buf)
+
+	// txResult := zg.TxResultDefaultOneCoin{
+	// 	SnOld: snOld,
+	// 	CmNew: cmNew,
+	// 	CNew:  cNew, //[2]zg.Note{[0], cNew[1]},
+	// 	Proof: buf.Bytes(),
+
+	// 	RhoNew:  rhoNew,
+	// 	RandNew: randNew,
+	// 	SkOld:   inp.OldSk,
+	// 	RhoOld:  new(big.Int).SetBytes(inp.OldNote.Rho),
+	// 	RandOld: new(big.Int).SetBytes(inp.OldNote.Rand),
+	// 	PkNew:   new(big.Int).SetBytes(inp.NewPk),
+	// }
+
+	// return zn.TxDefaultOneCoinPayload{
+	// 	TxResult:      txResult,
+	// 	Old:           inp.OldNote,
+	// 	NewVal:        inp.NewVal,
+	// 	ID:            ID,
+	// 	TargetAddress: targetAddress,
+	// 	TargetID:      targetID,
+	// 	PublicWitness: pubBuf.Bytes(),
+	// 	EncVal:        encVal,
+	// }
+
+	return zn.TxF1Payload{
+		Proof: buf.Bytes(),
 	}
 }
 
@@ -2035,6 +2301,10 @@ var globalCCSOneCoin constraint.ConstraintSystem
 var globalPKOneCoin groth16.ProvingKey
 var globalVKOneCoin groth16.VerifyingKey
 
+var globalCCSF1 constraint.ConstraintSystem
+var globalPKF1 groth16.ProvingKey
+var globalVKF1 groth16.VerifyingKey
+
 var CmList [][]byte
 var SnList [][]byte
 var TxListDefaultOneCoin []zg.TxResultDefaultOneCoin
@@ -2054,10 +2324,14 @@ func containsByteSlice(slice [][]byte, item []byte) bool {
 	return false
 }
 
-func (n *Node) Auction(TxListTemp []zn.Transaction, AuxList []zn.AuxList) {
+func (n *Node) Auction(validatorAddress string, TxListTemp []zn.Transaction, AuxList []zn.AuxList, nInList []zg.Note, targetIdList []int, targetAddresses []string) zn.AuctionResult {
+
+	conn, _ := net.Dial("tcp", validatorAddress)
+
+	defer conn.Close()
 
 	//Decipher Caux
-	var decValuesList []*zg.DecryptedValues
+	var decCinList []*zg.DecryptedValues
 	for i := 0; i < len(TxListTemp); i++ {
 		// fmt.Println("TxListTemp[i].Id=", TxListTemp[i].Id)
 		// fmt.Println("AuxList[i].C=", AuxList[i].C)
@@ -2067,12 +2341,12 @@ func (n *Node) Auction(TxListTemp []zn.Transaction, AuxList []zn.AuxList) {
 		if err != nil {
 			fmt.Println("Error deciphering Caux")
 		}
-		decValuesList = append(decValuesList, decValues)
+		decCinList = append(decCinList, decValues)
 		// fmt.Println("decValues n=", i, ": ", decValues)
 	}
 
 	//Decipher Cin
-	var decCinList []*zg.RegDecryptedValues
+	var decValuesList []*zg.RegDecryptedValues
 	for i := 0; i < len(TxListTemp); i++ {
 		// fmt.Println("TxListTemp[i].Id=", TxListTemp[i].Id)
 		// fmt.Println("AuxList[i].C=", AuxList[i].C)
@@ -2088,28 +2362,140 @@ func (n *Node) Auction(TxListTemp []zn.Transaction, AuxList []zn.AuxList) {
 		if err != nil {
 			fmt.Println("Error deciphering Caux")
 		}
-		decCinList = append(decCinList, decRegValues)
+		decValuesList = append(decValuesList, decRegValues)
 		// fmt.Println("decValues n=", i, ": ", decValues)
 	}
 
-	fmt.Println("decCinList[0].Coins:", decCinList[0].Coins)
-	fmt.Println("decCinList[0].Energy:", decCinList[0].Energy)
+	// fmt.Println("decCinList[0].Coins:", decCinList[0].Coins)
+	// fmt.Println("decCinList[0].Energy:", decCinList[0].Energy)
 
-	fmt.Println("decCinList[0].Bid:", decCinList[0].Bid)
-	fmt.Println("decCinList[0].Bid:", decCinList[0].Bid)
+	//fmt.Println("decCinList[0].Bid:", decCinList[0].Bid)
+	//fmt.Println("decCinList[0].Bid:", decCinList[0].Bid)
 
 	for i := 0; i < len(InfoBid); i++ {
 		fmt.Println("InfoBid[i].Gamma.Coins:", InfoBid[i].Gamma.Coins)
 		fmt.Println("InfoBid[i].Gamma.Energy:", InfoBid[i].Gamma.Energy)
 		fmt.Println("InfoBid[i].Bid:", InfoBid[i].Bid)
 		fmt.Println("InfoBid[i].Kind:", InfoBid[i].Kind)
-	}
-	//TxListTemp = append(TxListTemp, zn.Transaction{Tx: txReg, Id: txOneCoin.ID})
 
+		fmt.Println("GREAT")
+		fmt.Println("decValuesList[i].Coins:", decValuesList[i].Coins)
+		fmt.Println("decValuesList[i].Energy:", decValuesList[i].Energy)
+		fmt.Println("decValuesList[i].Bid:", decValuesList[i].Bid)
+		fmt.Println("decValuesList[i].PK:", decValuesList[i].PK)
+		fmt.Println("decValuesList[i].SkIn:", decValuesList[i].SkIn)
+	}
+
+	///Perform auction
+	var gammaOutList []zg.Gamma
+
+	for i := 0; i < len(InfoBid); i++ {
+		gammaOutList = append(gammaOutList, zg.Gamma{Coins: InfoBid[i].Gamma.Coins, Energy: InfoBid[i].Gamma.Energy})
+	}
+
+	//Compute tx_out
+	// var nInList []zg.Note
 	// for i := 0; i < len(TxListTemp); i++ {
-	// 	//Decrypt Caux
-	// 	Caux = AuxList[i].C
-	// 	Proof = AuxList[i].Proof
+	// 	rho := decCinList[i].Rho.Bytes()
+	// 	rand := decCinList[i].Rand.Bytes()
+	// 	nIn := GenerateNote(zg.Gamma{Coins: decCinList[i].Coins, Energy: decCinList[i].Energy}, decCinList[i].PK, rho[:], rand[:])
+	// 	nInList = append(nInList, nIn)
+	// }
+
+	// fmt.Println("nIn 0", nInList[0])
+	// fmt.Println("nIn 1", nInList[1])
+
+	// fmt.Println("decValuesList[0]", decValuesList[0])
+
+	inp := zg.TxProverInputHighLevelDefaultOneCoin{
+		OldNote: nInList[0],
+		OldSk:   decValuesList[0].SkIn,
+		NewVal:  zg.Gamma{Coins: InfoBid[0].Gamma.Coins, Energy: InfoBid[0].Gamma.Energy}, //gammaIn,
+		//NewVal: zg.Gamma{Coins: gammaOutList[0].Coins, Energy: gammaOutList[0].Energy}, //gammaIn,
+		NewPk:  decValuesList[0].PK,
+		EncKey: n.DHExchanges[targetIdList[0]].SharedSecret, //TxListTemp[i].Id
+		R:      n.DHExchanges[targetIdList[0]].Secret,
+		// B:      b_bytes[:], // à décommenter et définir si nécessaire
+		G:   n.G,
+		G_b: n.DHExchanges[targetIdList[0]].PartnerPublic,
+		G_r: n.DHExchanges[targetIdList[0]].EphemeralPublic,
+	}
+
+	/*
+		cm := zg.Committment(inp.NewVal.Coins, inp.NewVal.Energy,
+			rhoNew, randNew)
+	*/
+
+	rhoNew := zg.RandBigInt()
+	randNew := zg.RandBigInt()
+
+	tx_out := TransactionOneCoin(inp, globalCCSOneCoin, globalPKOneCoin, conn, n.ID, targetAddresses[0], targetIdList[0], rhoNew, randNew)
+
+	fmt.Println("tx_out:", tx_out)
+
+	//InSn := zg.PRF(frontend.API, , )
+
+	//h as mimc hahset
+	h := mimcNative.NewMiMC()
+	h.Write(decValuesList[0].SkIn)
+	h.Write(nInList[0].Rho)
+	var InSn []byte
+	InSn = h.Sum(InSn)
+	//h.Sum()
+
+	EncVal := TxListTemp[0].Tx.(zn.TxRegister).EncVal
+
+	//Dec values
+
+	decC := decValuesList[0].Coins.Bytes()
+	decE := decValuesList[0].Energy.Bytes()
+	decB := decValuesList[0].Bid.Bytes()
+
+	inp_ := zg.TxProverInputHighLevelF1{
+		InCoin:   nInList[0].Value.Coins.Bytes(),
+		InEnergy: nInList[0].Value.Energy.Bytes(),
+		InCm:     nInList[0].Cm,
+		InSn:     InSn,
+		InPk:     nInList[0].PkOwner,
+		InSk:     decValuesList[0].SkIn,
+		InRho:    nInList[0].Rho,
+		InRand:   nInList[0].Rand,
+		OutRho:   rhoNew.Bytes(),
+		OutRand:  randNew.Bytes(),
+
+		OutCoin:   gammaOutList[0].Coins.Bytes(),
+		OutEnergy: gammaOutList[0].Energy.Bytes(),
+		OutCm:     tx_out.TxResult.CmNew,
+		OutSn:     tx_out.TxResult.SnOld,
+		OutPk:     tx_out.TxResult.PkNew.Bytes(),
+
+		SkT: n.DHExchanges[targetIdList[0]].SharedSecret,
+
+		//pk_enc_bytes, skIn_enc_bytes, bid_enc_bytes, coins_enc_bytes, energy_enc_bytes
+		//pk, c, e, skin, bid
+		//C: [5]bls12377_fp.Element{EncVal[0], EncVal[3], EncVal[4], EncVal[1], EncVal[2]},
+		C:      [5]bls12377_fp.Element{EncVal[0], EncVal[1], EncVal[2], EncVal[3], EncVal[4]},
+		DecVal: [5][]byte{decValuesList[0].PK, decC[:], decE[:], decValuesList[0].SkIn, decB[:]},
+
+		//SnIn:  SnList[0],
+		//CmOut: CmListTemp[0],
+
+		R:   n.DHExchanges[targetIdList[0]].Secret,
+		G:   n.G,
+		G_b: n.DHExchanges[targetIdList[0]].PartnerPublic,
+		G_r: n.DHExchanges[targetIdList[0]].EphemeralPublic,
+
+		EncKey: n.DHExchanges[targetIdList[0]].SharedSecret,
+	}
+
+	tx_F1 := TransactionF1(inp_, globalCCSF1, globalPKF1, conn, n.ID, targetAddresses[0], targetIdList[0])
+
+	return zn.AuctionResult{
+		TxOut: tx_out,
+		TxF1:  tx_F1,
+	}
+
+	//SEND TO THE LEDGER FOR VERIFICATION
 
 }
 
@@ -2154,6 +2540,7 @@ func main() {
 	globalCCS, globalPK, globalVK = zg.LoadOrGenerateKeys("default")
 	globalCCSRegister, globalPKRegister, globalVKRegister = zg.LoadOrGenerateKeys("register")
 	globalCCSOneCoin, globalPKOneCoin, globalVKOneCoin = zg.LoadOrGenerateKeys("oneCoin")
+	globalCCSF1, globalPKF1, globalVKF1 = zg.LoadOrGenerateKeys("f1")
 
 	///////////// Diffie–Hellman key exchange //////////////
 	nodes[1].DiffieHellmanKeyExchange(nodes[2].Address)
@@ -2199,13 +2586,15 @@ func main() {
 	rand_in_1 := big.NewInt(2222).Bytes()
 	gammaIn_1 := zg.NewGamma(13, 2)
 	nIn_1 := GenerateNote(gammaIn_1, pkIn_1, rho_in_1, rand_in_1)
+	fmt.Println("ici:", nIn_1)
 
 	//new1 := zg.NewGamma(12, 5)
 	sk_out_1 := GenerateSk()
 	pkOut_1 := GeneratePk(sk_out_1)
-	bid_1 := big.NewInt(5) //bid energy
+	bid_1 := big.NewInt(13) //bid energy
 
-	fmt.Println("HERE:", bid_1)
+	fmt.Println("sk_in_1:", sk_in_1)
+	fmt.Println("pkOut_1:", pkOut_1)
 
 	/////////////////
 	///////Notes of nodes[2] (nBase, nIn, nOut)
@@ -2228,7 +2617,11 @@ func main() {
 	//new1 := zg.NewGamma(12, 5)
 	sk_out_2 := GenerateSk()
 	pkOut_2 := GeneratePk(sk_out_2)
-	bid_2 := big.NewInt(5) //bid energy
+	bid_2 := big.NewInt(15) //bid energy
+
+	nInList := []zg.Note{nIn_1, nIn_2}
+	targetIdList := []int{nodes[1].ID, nodes[2].ID}
+	targetAddresses := []string{nodes[1].Address, nodes[2].Address}
 
 	/////////////////
 	///////Send register transactions
@@ -2239,7 +2632,7 @@ func main() {
 
 	time.Sleep(4 * time.Second)
 
-	nodes[3].Auction(TxListTemp, AuxList)
+	nodes[3].Auction(nodes[0].Address, TxListTemp, AuxList, nInList, targetIdList, targetAddresses)
 
 	/////////////////
 	///////Auction phase
