@@ -40,5 +40,9 @@ func init() {
 	gob.Register(DHResponsePayload{})
 	gob.Register(RegisterPayload{})
 	gob.Register(TxRegister{})
+	gob.Register(AuctionResult{})
+	gob.Register(TxF1Payload{})
+	gob.Register(AuctionResultN{})
+	gob.Register(TxFNPayload{})
 	// Vous pouvez enregistrer d'autres types personnalisés ici si nécessaire.
 }

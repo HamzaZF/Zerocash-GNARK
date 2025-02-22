@@ -2,7 +2,7 @@ import os
 import shutil
 
 # Chemin des dossiers à nettoyer
-folder_paths = ["./_run_default", "./_run_register", "./_run_oneCoin", "./_run_F1"]
+folder_paths = ["./_run_default", "./_run_register", "./_run_oneCoin", "./_run_F1", "./_run_2coin", "./_run_F2"]
 
 # Vérifie si le dossier existe avant de tenter de supprimer son contenu
 for folder_path in folder_paths:

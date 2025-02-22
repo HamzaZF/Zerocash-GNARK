@@ -103,12 +103,43 @@ type TxDefaultOneCoinPayload struct {
 	EncVal        [6]bls12377_fp.Element
 }
 
+type TxDefaultNCoinPayload struct {
+	TxResult      zg.TxResultDefaultNCoin
+	Old           []zg.Note  // Un tableau de notes (une par coin)
+	NewVal        []zg.Gamma // Un tableau de Gamma (une par coin)
+	ID            int
+	TargetAddress string
+	TargetID      int
+	PublicWitness []byte
+	EncVal        [][6]bls12377_fp.Element // Chaque coin fournit un tableau de 6 éléments encryptés
+}
+
 type AuctionResult struct {
-	TxOut TxDefaultOneCoinPayload
-	TxF1  TxF1Payload
+	TxOut    TxDefaultOneCoinPayload
+	TxF1     TxF1Payload
+	SenderID int
+	InpDOC   zg.TxProverInputHighLevelDefaultOneCoin
+	InpF     zg.TxProverInputHighLevelF1
+	RhoNew   *big.Int
+	RandNew  *big.Int
+}
+
+type AuctionResultN struct {
+	TxOut    TxDefaultNCoinPayload
+	TxFN     TxFNPayload
+	SenderID int
+	InpDOC   zg.TxProverInputHighLevelDefaultNCoin
+	InpF     zg.TxProverInputHighLevelFN
+	RhoNew   []*big.Int
+	RandNew  []*big.Int
+	//N        int
 }
 
 type TxF1Payload struct {
+	Proof []byte
+}
+
+type TxFNPayload struct {
 	Proof []byte
 }
 

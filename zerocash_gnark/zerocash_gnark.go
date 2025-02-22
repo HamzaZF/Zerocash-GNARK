@@ -440,6 +440,19 @@ func BuildDecRegMimc(EncKey bls12377.G1Affine, ciphertext []bls12377_fp.Element)
 	}, nil
 }
 
+type TxProverInputHighLevelDefaultNCoin struct {
+	OldNote []Note              // Un tableau de Note (une par coin)
+	OldSk   [][]byte            // Un tableau de clés secrètes (une par coin)
+	NewVal  []Gamma             // Un tableau de Gamma (une par coin)
+	NewPk   [][]byte            // Un tableau de clés publiques new (une par coin)
+	EncKey  []bls12377.G1Affine // Paramètre global (si chaque coin utilise la même clé d'encryption)
+	R       [][]byte            // Paramètre global
+	// B      []byte      // Si nécessaire
+	G   []bls12377.G1Affine // Paramètre global
+	G_b []bls12377.G1Affine // Paramètre global
+	G_r []bls12377.G1Affine // Paramètre global
+}
+
 type TxProverInputHighLevelDefaultOneCoin struct {
 	OldNote Note
 	OldSk   []byte
@@ -872,6 +885,147 @@ func (ip *InputTxF1) BuildWitness() (frontend.Circuit, error) {
 	return &c, nil
 }
 
+// Structure d'input pour F multi‑coin (version FN)
+type InputTxFN struct {
+	// Champs coin‑spécifiques (pour chaque coin)
+	InCoin   []frontend.Variable
+	InEnergy []frontend.Variable
+	InCm     []frontend.Variable
+	InSn     []frontend.Variable
+	InPk     []frontend.Variable
+	InSk     []frontend.Variable
+	InRho    []frontend.Variable
+	InRand   []frontend.Variable
+
+	OutCoin   []frontend.Variable
+	OutEnergy []frontend.Variable
+	OutCm     []frontend.Variable
+	OutSn     []frontend.Variable
+	OutPk     []frontend.Variable
+	OutRho    []frontend.Variable
+	OutRand   []frontend.Variable
+
+	// Paramètre global commun
+	SkT []bls12377.G1Affine
+
+	// Éventuellement, d'autres champs coin‑spécifiques (si nécessaire)
+	// Par exemple, si vous souhaitez avoir un SnIn et CmOut par coin :
+	SnIn  []frontend.Variable
+	CmOut []frontend.Variable
+
+	// Pour chaque coin, un tableau de 5 éléments (ex. issus de l'encryption)
+	C      [][5][]byte
+	DecVal [][5][]byte
+
+	// Paramètres globaux (communs à tous les coins)
+	EncKey []bls12377.G1Affine
+	// Si R doit être coin‑spécifique, on pourra en faire une slice, sinon global :
+	R   []frontend.Variable
+	G   []bls12377.G1Affine
+	G_b []bls12377.G1Affine
+	G_r []bls12377.G1Affine
+}
+
+func (ip *InputTxFN) BuildWitness() (frontend.Circuit, error) {
+	// On vérifie que l'input contient exactement 2 coins.
+	if len(ip.InCoin) != 2 {
+		return nil, fmt.Errorf("InputTxFN.BuildWitness: expected exactly 2 coins, got %d", len(ip.InCoin))
+	}
+
+	var c CircuitTxF2 // CircuitTxF2 est défini avec des tableaux statiques pour 2 coins.
+	// -------------------------
+	// Attribution pour le coin 0
+	// -------------------------
+	c.InCoin0 = ip.InCoin[0]
+	c.InEnergy0 = ip.InEnergy[0]
+	c.InCm0 = ip.InCm[0]
+	c.InSn0 = ip.InSn[0]
+	c.InPk0 = ip.InPk[0]
+	c.InSk0 = ip.InSk[0]
+	c.InRho0 = ip.InRho[0]
+	c.InRand0 = ip.InRand[0]
+
+	c.OutCoin0 = ip.OutCoin[0]
+	c.OutEnergy0 = ip.OutEnergy[0]
+	c.OutCm0 = ip.OutCm[0]
+	c.OutSn0 = ip.OutSn[0]
+	c.OutPk0 = ip.OutPk[0]
+	c.OutRho0 = ip.OutRho[0]
+	c.OutRand0 = ip.OutRand[0]
+
+	// Si les champs optionnels sont présents pour le coin 0, on les copie
+	// if len(ip.SnIn) >= 2 {
+	// 	c.SnIn0 = ip.SnIn[0]
+	// }
+	// if len(ip.CmOut) >= 2 {
+	// 	c.CmOut0 = ip.CmOut[0]
+	// }
+
+	// Recopie des tableaux d'encryption pour le coin 0
+	if len(ip.C) < 2 || len(ip.DecVal) < 2 {
+		return nil, fmt.Errorf("InputTxFN.BuildWitness: encryption arrays for 2 coins are required")
+	}
+
+	for i := 0; i < 5; i++ {
+		c.C0[i] = ip.C[0][i]
+		c.DecVal0[i] = ip.DecVal[0][i]
+	}
+
+	// -------------------------
+	// Attribution pour le coin 1
+	// -------------------------
+	c.InCoin1 = ip.InCoin[1]
+	c.InEnergy1 = ip.InEnergy[1]
+	c.InCm1 = ip.InCm[1]
+	c.InSn1 = ip.InSn[1]
+	c.InPk1 = ip.InPk[1]
+	c.InSk1 = ip.InSk[1]
+	c.InRho1 = ip.InRho[1]
+	c.InRand1 = ip.InRand[1]
+
+	c.OutCoin1 = ip.OutCoin[1]
+	c.OutEnergy1 = ip.OutEnergy[1]
+	c.OutCm1 = ip.OutCm[1]
+	c.OutSn1 = ip.OutSn[1]
+	c.OutPk1 = ip.OutPk[1]
+	c.OutRho1 = ip.OutRho[1]
+	c.OutRand1 = ip.OutRand[1]
+
+	// if len(ip.SnIn) >= 2 {
+	// 	c.SnIn1 = ip.SnIn[1]
+	// }
+	// if len(ip.CmOut) >= 2 {
+	// 	c.CmOut1 = ip.CmOut[1]
+	// }
+
+	// Recopie des tableaux d'encryption pour le coin 1
+
+	for i := 0; i < 5; i++ {
+		c.C1[i] = ip.C[1][i]
+		c.DecVal1[i] = ip.DecVal[1][i]
+	}
+
+	// -------------------------
+	// Paramètres
+	// -------------------------
+	c.SkT0 = sw_bls12377.NewG1Affine(ip.SkT[0])
+	c.SkT1 = sw_bls12377.NewG1Affine(ip.SkT[1])
+	c.EncKey0 = sw_bls12377.NewG1Affine(ip.EncKey[0])
+	c.EncKey1 = sw_bls12377.NewG1Affine(ip.EncKey[1])
+	c.R0 = ip.R[0]
+	c.R1 = ip.R[1]
+	// Pour R, on suppose qu'il s'agit d'une valeur globale (on prend le premier élément s'il s'agit d'un slice)
+
+	c.G0 = sw_bls12377.NewG1Affine(ip.G[0])
+	c.G1 = sw_bls12377.NewG1Affine(ip.G[1])
+	c.G_b0 = sw_bls12377.NewG1Affine(ip.G_b[0])
+	c.G_b1 = sw_bls12377.NewG1Affine(ip.G_b[1])
+	c.G_r0 = sw_bls12377.NewG1Affine(ip.G_r[0])
+	c.G_r1 = sw_bls12377.NewG1Affine(ip.G_r[1])
+
+	return &c, nil
+}
+
 type TxProverInputHighLevelF1 struct {
 	InCoin   []byte
 	InEnergy []byte
@@ -908,6 +1062,42 @@ type TxProverInputHighLevelF1 struct {
 	G   bls12377.G1Affine
 	G_b bls12377.G1Affine
 	G_r bls12377.G1Affine
+}
+
+type TxProverInputHighLevelFN struct {
+	// Données d'entrée pour chaque coin
+	InCoin   [][]byte
+	InEnergy [][]byte
+	InCm     [][]byte
+	InSn     [][]byte
+	InPk     [][]byte
+	InSk     [][]byte
+	InRho    [][]byte
+	InRand   [][]byte
+
+	// Données de sortie pour chaque coin
+	OutCoin   [][]byte
+	OutEnergy [][]byte
+	OutCm     [][]byte
+	OutSn     [][]byte
+	OutPk     [][]byte
+	OutRho    [][]byte
+	OutRand   [][]byte
+
+	// Paramètre pour la signature (global)
+	SkT []bls12377.G1Affine
+
+	// Pour chaque coin, un tableau de 5 éléments
+	C [][5]bls12377_fp.Element
+	// Pour chaque coin, un tableau de 5 valeurs (en bytes)
+	DecVal [][5][]byte
+
+	// Paramètres globaux d'encryption et de circuit
+	EncKey []bls12377.G1Affine
+	R      [][]byte
+	G      []bls12377.G1Affine
+	G_b    []bls12377.G1Affine
+	G_r    []bls12377.G1Affine
 }
 
 type CircuitTxF1 struct {
@@ -1060,6 +1250,160 @@ func (c *CircuitTxF1) Define(api frontend.API) error {
 	// hasher.Write(c.SkOld)
 	// pk := hasher.Sum()
 	// api.AssertIsEqual(c.PkOld, pk)
+	return nil
+}
+
+// CircuitTxF2 définit un circuit pour deux coins.
+type CircuitTxF2 struct {
+	// ----- Coin 0 -----
+	// Données de la note d'entrée (publiques)
+	InCoin0   frontend.Variable `gnark:",public"`
+	InEnergy0 frontend.Variable `gnark:",public"`
+	InCm0     frontend.Variable `gnark:",public"`
+	InSn0     frontend.Variable `gnark:",public"` // PRF_{sk}(rho)
+	InPk0     frontend.Variable `gnark:",public"`
+	InSk0     frontend.Variable `gnark:",public"`
+	InRho0    frontend.Variable `gnark:",public"`
+	InRand0   frontend.Variable `gnark:",public"`
+
+	// Données de la note de sortie (publiques)
+	OutCoin0   frontend.Variable `gnark:",public"`
+	OutEnergy0 frontend.Variable `gnark:",public"`
+	OutCm0     frontend.Variable `gnark:",public"`
+	OutSn0     frontend.Variable `gnark:",public"`
+	OutPk0     frontend.Variable `gnark:",public"`
+	OutRho0    frontend.Variable `gnark:",public"`
+	OutRand0   frontend.Variable `gnark:",public"`
+
+	// Tableaux auxiliaires pour le coin 0 (issus de l'encryption)
+	C0      [5]frontend.Variable
+	DecVal0 [5]frontend.Variable
+
+	// ----- Coin 1 -----
+	// Données de la note d'entrée (publiques)
+	InCoin1   frontend.Variable `gnark:",public"`
+	InEnergy1 frontend.Variable `gnark:",public"`
+	InCm1     frontend.Variable `gnark:",public"`
+	InSn1     frontend.Variable `gnark:",public"` // PRF_{sk}(rho)
+	InPk1     frontend.Variable `gnark:",public"`
+	InSk1     frontend.Variable `gnark:",public"`
+	InRho1    frontend.Variable `gnark:",public"`
+	InRand1   frontend.Variable `gnark:",public"`
+
+	// Données de la note de sortie (publiques)
+	OutCoin1   frontend.Variable `gnark:",public"`
+	OutEnergy1 frontend.Variable `gnark:",public"`
+	OutCm1     frontend.Variable `gnark:",public"`
+	OutSn1     frontend.Variable `gnark:",public"`
+	OutPk1     frontend.Variable `gnark:",public"`
+	OutRho1    frontend.Variable `gnark:",public"`
+	OutRand1   frontend.Variable `gnark:",public"`
+
+	// Tableaux auxiliaires pour le coin 1
+	C1      [5]frontend.Variable
+	DecVal1 [5]frontend.Variable
+
+	// ----- Paramètres -----
+	SkT0    sw_bls12377.G1Affine
+	R0      frontend.Variable
+	G0      sw_bls12377.G1Affine `gnark:",public"`
+	G_b0    sw_bls12377.G1Affine `gnark:",public"`
+	G_r0    sw_bls12377.G1Affine `gnark:",public"`
+	EncKey0 sw_bls12377.G1Affine
+
+	SkT1    sw_bls12377.G1Affine
+	R1      frontend.Variable
+	G1      sw_bls12377.G1Affine `gnark:",public"`
+	G_b1    sw_bls12377.G1Affine `gnark:",public"`
+	G_r1    sw_bls12377.G1Affine `gnark:",public"`
+	EncKey1 sw_bls12377.G1Affine
+}
+
+func (c *CircuitTxF2) Define(api frontend.API) error {
+	// // --- Traitement du coin 0 ---
+	decVal0 := DecZKReg(api, c.C0[:], c.SkT0)
+	api.AssertIsEqual(c.DecVal0[0], decVal0[0])
+	api.AssertIsEqual(c.DecVal0[1], decVal0[1])
+	api.AssertIsEqual(c.DecVal0[2], decVal0[2])
+	api.AssertIsEqual(c.DecVal0[3], decVal0[3])
+	api.AssertIsEqual(c.DecVal0[4], decVal0[4])
+
+	// Vérification que InSn0 correspond à PRF(InSk0, InRho0)
+	snComputed0 := PRF(api, c.InSk0, c.InRho0)
+	api.AssertIsEqual(c.InSn0, snComputed0)
+
+	// Vérification de la cohérence de la note pour le coin 0
+	api.AssertIsEqual(c.InCoin0, c.OutCoin0)
+	api.AssertIsEqual(c.InEnergy0, c.OutEnergy0)
+
+	// Calcul de OutCm0
+	hasher0, _ := mimc.NewMiMC(api)
+	hasher0.Write(c.OutCoin0)
+	hasher0.Write(c.OutEnergy0)
+	hasher0.Write(c.OutRho0)
+	hasher0.Write(c.OutRand0)
+	cm0 := hasher0.Sum()
+	api.AssertIsEqual(c.OutCm0, cm0)
+
+	// // --- Traitement du coin 1 ---
+	decVal1 := DecZKReg(api, c.C1[:], c.SkT1)
+	api.AssertIsEqual(c.DecVal1[0], decVal1[0])
+	api.AssertIsEqual(c.DecVal1[1], decVal1[1])
+	api.AssertIsEqual(c.DecVal1[2], decVal1[2])
+	api.AssertIsEqual(c.DecVal1[3], decVal1[3])
+	api.AssertIsEqual(c.DecVal1[4], decVal1[4])
+
+	// Vérification que InSn1 correspond à PRF(InSk1, InRho1)
+	snComputed1 := PRF(api, c.InSk1, c.InRho1)
+	api.AssertIsEqual(c.InSn1, snComputed1)
+
+	// Vérification de la cohérence de la note pour le coin 1
+	api.AssertIsEqual(c.InCoin1, c.OutCoin1)
+	api.AssertIsEqual(c.InEnergy1, c.OutEnergy1)
+
+	// Calcul de OutCm1
+	hasher1, _ := mimc.NewMiMC(api)
+	hasher1.Write(c.OutCoin1)
+	hasher1.Write(c.OutEnergy1)
+	hasher1.Write(c.OutRho1)
+	hasher1.Write(c.OutRand1)
+	cm1 := hasher1.Sum()
+	api.AssertIsEqual(c.OutCm1, cm1)
+
+	// --- Vérifications globales (pour l'encryption) ---
+	// Vérifie que (G^R)^b == EncKey
+	G_r_b0 := new(sw_bls12377.G1Affine)
+	G_r_b0.ScalarMul(api, c.G_b0, c.R0)
+	api.AssertIsEqual(c.EncKey0.X, G_r_b0.X)
+	api.AssertIsEqual(c.EncKey0.Y, G_r_b0.Y)
+
+	G_r_b1 := new(sw_bls12377.G1Affine)
+	G_r_b1.ScalarMul(api, c.G_b1, c.R1)
+	api.AssertIsEqual(c.EncKey1.X, G_r_b1.X)
+	api.AssertIsEqual(c.EncKey1.Y, G_r_b1.Y)
+
+	// Vérifie que (G^R) == G_r
+	G_r0 := new(sw_bls12377.G1Affine)
+	G_r0.ScalarMul(api, c.G0, c.R0)
+	api.AssertIsEqual(c.G_r0.X, G_r0.X)
+	api.AssertIsEqual(c.G_r0.Y, G_r0.Y)
+
+	G_r1 := new(sw_bls12377.G1Affine)
+	G_r1.ScalarMul(api, c.G1, c.R1)
+	api.AssertIsEqual(c.G_r1.X, G_r1.X)
+	api.AssertIsEqual(c.G_r1.Y, G_r1.Y)
+
+	// Vérification de la dérivation de la clé publique pour chaque coin : InPk = MiMC(InSk)
+	hasher0.Reset()
+	hasher0.Write(c.InSk0)
+	pk0 := hasher0.Sum()
+	api.AssertIsEqual(c.InPk0, pk0)
+
+	hasher1.Reset()
+	hasher1.Write(c.InSk1)
+	pk1 := hasher1.Sum()
+	api.AssertIsEqual(c.InPk1, pk1)
+
 	return nil
 }
 
@@ -1505,6 +1849,262 @@ type InputProverDefaultOneCoin struct {
 	RandNew *big.Int
 }
 
+type InputProverDefaultNCoin struct {
+	// PUBLIC (pour chaque coin)
+	OldCoin   []*big.Int // ancien montant pour chaque coin
+	OldEnergy []*big.Int // ancienne énergie pour chaque coin
+	CmOld     [][]byte   // ancien commitment pour chaque coin
+	SnOld     [][]byte   // ancien serial number pour chaque coin
+	PkOld     [][]byte   // ancienne clé publique pour chaque coin
+
+	NewCoin   []*big.Int // nouveau montant pour chaque coin
+	NewEnergy []*big.Int // nouvelle énergie pour chaque coin
+	CmNew     [][]byte   // nouveau commitment pour chaque coin
+	// CNew est un slice de slice de []byte (chaque coin fournit 6 éléments comme dans TransactionOneCoin)
+	CNew [][][]byte
+
+	// PARAMÈTRES PUBLICS GLOBAUX
+	R [][]byte
+	//B      []byte   // si nécessaire
+	G      []bls12377.G1Affine
+	G_b    []bls12377.G1Affine
+	G_r    []bls12377.G1Affine
+	EncKey []bls12377.G1Affine
+
+	// PRIVÉ (pour chaque coin)
+	SkOld   []*big.Int // ancienne clé secrète pour chaque coin
+	RhoOld  []*big.Int // ancien rho pour chaque coin
+	RandOld []*big.Int // ancien rand pour chaque coin
+
+	PkNew   []*big.Int // nouvelle clé publique pour chaque coin
+	RhoNew  []*big.Int // nouveau rho pour chaque coin
+	RandNew []*big.Int // nouveau rand pour chaque coin
+}
+
+func (inp *InputProverDefaultNCoin) BuildWitness2() (frontend.Circuit, error) {
+
+	var c CircuitTxDefaultTwoCoin
+
+	// --- Remplissage pour le coin 0 ---
+	c.OldCoin0 = inp.OldCoin[0]
+	c.OldEnergy0 = inp.OldEnergy[0]
+	c.CmOld0 = new(big.Int).SetBytes(inp.CmOld[0])
+	c.SnOld0 = new(big.Int).SetBytes(inp.SnOld[0])
+	c.PkOld0 = new(big.Int).SetBytes(inp.PkOld[0])
+	c.SkOld0 = inp.SkOld[0]
+	c.RhoOld0 = inp.RhoOld[0]
+	c.RandOld0 = inp.RandOld[0]
+
+	c.NewCoin0 = inp.NewCoin[0]
+	c.NewEnergy0 = inp.NewEnergy[0]
+	c.CmNew0 = new(big.Int).SetBytes(inp.CmNew[0])
+	for k := 0; k < 6; k++ {
+		c.CNew0[k] = inp.CNew[0][k]
+	}
+	c.PkNew0 = inp.PkNew[0]
+	c.RhoNew0 = inp.RhoNew[0]
+	c.RandNew0 = inp.RandNew[0]
+
+	c.R0 = new(big.Int).SetBytes(inp.R[0])
+	c.G0 = sw_bls12377.NewG1Affine(inp.G[0])
+	c.G_b0 = sw_bls12377.NewG1Affine(inp.G_b[0])
+	c.G_r0 = sw_bls12377.NewG1Affine(inp.G_r[0])
+	c.EncKey0 = sw_bls12377.NewG1Affine(inp.EncKey[0])
+
+	// --- Remplissage pour le coin 1 ---
+	c.OldCoin1 = inp.OldCoin[1]
+	c.OldEnergy1 = inp.OldEnergy[1]
+	c.CmOld1 = new(big.Int).SetBytes(inp.CmOld[1])
+	c.SnOld1 = new(big.Int).SetBytes(inp.SnOld[1])
+	c.PkOld1 = new(big.Int).SetBytes(inp.PkOld[1])
+	c.SkOld1 = inp.SkOld[1]
+	c.RhoOld1 = inp.RhoOld[1]
+	c.RandOld1 = inp.RandOld[1]
+
+	c.NewCoin1 = inp.NewCoin[1]
+	c.NewEnergy1 = inp.NewEnergy[1]
+	c.CmNew1 = new(big.Int).SetBytes(inp.CmNew[1])
+	for k := 0; k < 6; k++ {
+		c.CNew1[k] = inp.CNew[1][k]
+	}
+	c.PkNew1 = inp.PkNew[1]
+	c.RhoNew1 = inp.RhoNew[1]
+	c.RandNew1 = inp.RandNew[1]
+
+	// --- Paramètres globaux (communs aux deux coins) --- ///NOOOO
+	c.R1 = new(big.Int).SetBytes(inp.R[1])
+	c.G1 = sw_bls12377.NewG1Affine(inp.G[1])
+	c.G_b1 = sw_bls12377.NewG1Affine(inp.G_b[1])
+	c.G_r1 = sw_bls12377.NewG1Affine(inp.G_r[1])
+	c.EncKey1 = sw_bls12377.NewG1Affine(inp.EncKey[1])
+
+	return &c, nil
+}
+
+type CircuitTxDefaultTwoCoin struct {
+	// === Coin 0 ===
+	// Données publiques de l'ancienne note
+	OldCoin0   frontend.Variable `gnark:",public"`
+	OldEnergy0 frontend.Variable `gnark:",public"`
+	CmOld0     frontend.Variable `gnark:",public"`
+	SnOld0     frontend.Variable `gnark:",public"` // PRF_{sk}(rho)
+	PkOld0     frontend.Variable `gnark:",public"`
+
+	// Données publiques de la nouvelle note
+	NewCoin0   frontend.Variable    `gnark:",public"`
+	NewEnergy0 frontend.Variable    `gnark:",public"`
+	CmNew0     frontend.Variable    `gnark:",public"`
+	CNew0      [6]frontend.Variable `gnark:",public"` // "cipher" simulé
+
+	// Données privées de l'ancienne note
+	SkOld0   frontend.Variable
+	RhoOld0  frontend.Variable
+	RandOld0 frontend.Variable
+
+	// Données privées de la nouvelle note
+	PkNew0   frontend.Variable
+	RhoNew0  frontend.Variable
+	RandNew0 frontend.Variable
+
+	// === Coin 1 ===
+	OldCoin1   frontend.Variable `gnark:",public"`
+	OldEnergy1 frontend.Variable `gnark:",public"`
+	CmOld1     frontend.Variable `gnark:",public"`
+	SnOld1     frontend.Variable `gnark:",public"`
+	PkOld1     frontend.Variable `gnark:",public"`
+
+	NewCoin1   frontend.Variable    `gnark:",public"`
+	NewEnergy1 frontend.Variable    `gnark:",public"`
+	CmNew1     frontend.Variable    `gnark:",public"`
+	CNew1      [6]frontend.Variable `gnark:",public"`
+
+	SkOld1   frontend.Variable
+	RhoOld1  frontend.Variable
+	RandOld1 frontend.Variable
+
+	PkNew1   frontend.Variable
+	RhoNew1  frontend.Variable
+	RandNew1 frontend.Variable
+
+	// === Paramètres ===
+	R0      frontend.Variable
+	G0      sw_bls12377.G1Affine `gnark:",public"`
+	G_b0    sw_bls12377.G1Affine `gnark:",public"`
+	G_r0    sw_bls12377.G1Affine `gnark:",public"`
+	EncKey0 sw_bls12377.G1Affine
+
+	R1      frontend.Variable
+	G1      sw_bls12377.G1Affine `gnark:",public"`
+	G_b1    sw_bls12377.G1Affine `gnark:",public"`
+	G_r1    sw_bls12377.G1Affine `gnark:",public"`
+	EncKey1 sw_bls12377.G1Affine
+}
+
+func (c *CircuitTxDefaultTwoCoin) Define(api frontend.API) error {
+	// ----- Pour le coin 0 -----
+	// 1) Recalcule CmOld0
+	hasher0, _ := mimc.NewMiMC(api)
+	hasher0.Reset()
+	hasher0.Write(c.OldCoin0)
+	hasher0.Write(c.OldEnergy0)
+	hasher0.Write(c.RhoOld0)
+	hasher0.Write(c.RandOld0)
+	cm0 := hasher0.Sum()
+	api.AssertIsEqual(c.CmOld0, cm0)
+
+	// 2) Recalcule SnOld0 = PRF(SkOld0, RhoOld0)
+	snComputed0 := PRF(api, c.SkOld0, c.RhoOld0)
+	api.AssertIsEqual(c.SnOld0, snComputed0)
+
+	// 3) Recalcule CmNew0
+	hasher0.Reset()
+	hasher0.Write(c.NewCoin0)
+	hasher0.Write(c.NewEnergy0)
+	hasher0.Write(c.RhoNew0)
+	hasher0.Write(c.RandNew0)
+	cmNew0 := hasher0.Sum()
+	api.AssertIsEqual(c.CmNew0, cmNew0)
+
+	// 4) Recalcule CNew0 = EncZK(PkNew0, NewCoin0, NewEnergy0, RhoNew0, RandNew0, CmNew0, EncKey)
+	encVal0 := EncZK(api, c.PkNew0, c.NewCoin0, c.NewEnergy0, c.RhoNew0, c.RandNew0, c.CmNew0, c.EncKey0)
+	for i := 0; i < 6; i++ {
+		api.AssertIsEqual(c.CNew0[i], encVal0[i])
+	}
+
+	// ----- Pour le coin 1 -----
+	hasher1, _ := mimc.NewMiMC(api)
+	hasher1.Reset()
+	hasher1.Write(c.OldCoin1)
+	hasher1.Write(c.OldEnergy1)
+	hasher1.Write(c.RhoOld1)
+	hasher1.Write(c.RandOld1)
+	cm1 := hasher1.Sum()
+	api.AssertIsEqual(c.CmOld1, cm1)
+
+	snComputed1 := PRF(api, c.SkOld1, c.RhoOld1)
+	api.AssertIsEqual(c.SnOld1, snComputed1)
+
+	hasher1.Reset()
+	hasher1.Write(c.NewCoin1)
+	hasher1.Write(c.NewEnergy1)
+	hasher1.Write(c.RhoNew1)
+	hasher1.Write(c.RandNew1)
+	cmNew1 := hasher1.Sum()
+	api.AssertIsEqual(c.CmNew1, cmNew1)
+
+	encVal1 := EncZK(api, c.PkNew1, c.NewCoin1, c.NewEnergy1, c.RhoNew1, c.RandNew1, c.CmNew1, c.EncKey1)
+	for i := 0; i < 6; i++ {
+		api.AssertIsEqual(c.CNew1[i], encVal1[i])
+	}
+
+	// ----- Conservation globale -----
+	// La somme des anciens coins doit être égale à la somme des nouveaux coins
+	totalOldCoin := api.Add(c.OldCoin0, c.OldCoin1)
+	totalNewCoin := api.Add(c.NewCoin0, c.NewCoin1)
+	api.AssertIsEqual(totalOldCoin, totalNewCoin)
+
+	totalOldEnergy := api.Add(c.OldEnergy0, c.OldEnergy1)
+	totalNewEnergy := api.Add(c.NewEnergy0, c.NewEnergy1)
+	api.AssertIsEqual(totalOldEnergy, totalNewEnergy)
+
+	// ----- Vérifications additionnelles -----
+	// Vérification de l'encryption : (G^r)^b == EncKey
+
+	G_r_b0 := new(sw_bls12377.G1Affine)
+	G_r_b0.ScalarMul(api, c.G_b0, c.R0)
+	api.AssertIsEqual(c.EncKey0.X, G_r_b0.X)
+	api.AssertIsEqual(c.EncKey0.Y, G_r_b0.Y)
+
+	G_r_b1 := new(sw_bls12377.G1Affine)
+	G_r_b1.ScalarMul(api, c.G_b1, c.R1)
+	api.AssertIsEqual(c.EncKey1.X, G_r_b1.X)
+	api.AssertIsEqual(c.EncKey1.Y, G_r_b1.Y)
+
+	// Vérification que (G^r) == G_r
+	G_r0 := new(sw_bls12377.G1Affine)
+	G_r0.ScalarMul(api, c.G0, c.R0)
+	api.AssertIsEqual(c.G_r0.X, G_r0.X)
+	api.AssertIsEqual(c.G_r0.Y, G_r0.Y)
+
+	G_r1 := new(sw_bls12377.G1Affine)
+	G_r1.ScalarMul(api, c.G1, c.R1)
+	api.AssertIsEqual(c.G_r1.X, G_r1.X)
+	api.AssertIsEqual(c.G_r1.Y, G_r1.Y)
+
+	// Vérification de la dérivation de la clé publique pour chaque coin : PkOld = MiMC(SkOld)
+	hasher0.Reset()
+	hasher0.Write(c.SkOld0)
+	pkOldComputed0 := hasher0.Sum()
+	api.AssertIsEqual(c.PkOld0, pkOldComputed0)
+
+	hasher1.Reset()
+	hasher1.Write(c.SkOld1)
+	pkOldComputed1 := hasher1.Sum()
+	api.AssertIsEqual(c.PkOld1, pkOldComputed1)
+
+	return nil
+}
+
 /*
 tx TxResultDefaultOneCoin,
 	CmIn []byte,
@@ -1766,6 +2366,22 @@ type TxResultDefaultOneCoin struct {
 	RhoOld  *big.Int
 	RandOld *big.Int
 	PkNew   *big.Int
+}
+
+type TxResultDefaultNCoin struct {
+	// Pour chaque coin, on stocke les valeurs spécifiques sous forme de slices.
+	SnOld [][]byte // Le serial number pour chaque coin.
+	CmNew [][]byte // Le commitment new pour chaque coin.
+	CNew  []Note   // La note new pour chaque coin.
+	Proof []byte   // La preuve globale de la transaction.
+
+	// Pour la validation (chaque champ correspond aux données d'un coin)
+	RhoNew  []*big.Int
+	RandNew []*big.Int
+	SkOld   [][]byte
+	RhoOld  []*big.Int
+	RandOld []*big.Int
+	PkNew   []*big.Int
 }
 
 type TxResultRegister struct {
@@ -2531,6 +3147,131 @@ func LoadOrGenerateKeys(circuit_type string) (constraint.ConstraintSystem, groth
 			globalPK = pk
 			globalVK = vk
 		}
+	case "2coin":
+		if _, err := os.Stat("_run_2coin"); os.IsNotExist(err) {
+			os.Mkdir("_run_2coin", 0755)
+		}
+		// 1) Charger/Compiler circuit
+		cssFile := "_run_2coin/css"
+		var c CircuitTxDefaultTwoCoin
+		if _, err := os.Stat(cssFile); err == nil {
+			d, _ := os.ReadFile(cssFile)
+			ccs := groth16.NewCS(ecc.BW6_761)
+			ccs.ReadFrom(bytes.NewReader(d))
+			logger.Info().Str("cssFile", cssFile).Msg("Circuit loaded from disk")
+			globalCCS = ccs
+		} else {
+			//fmt.Println("Compiling circuit =>", cssFile)
+			ccs, err := frontend.Compile(ecc.BW6_761.ScalarField(), r1cs.NewBuilder, &c)
+			if err != nil {
+				panic(err)
+			}
+			var buf bytes.Buffer
+			ccs.WriteTo(&buf)
+			os.WriteFile(cssFile, buf.Bytes(), 0644)
+			globalCCS = ccs
+		}
+		// 2) Charger ou générer pk+vk
+		pkFile := "_run_2coin/zk_pk"
+		vkFile := "_run_2coin/zk_vk"
+		if fileExists(pkFile) && fileExists(vkFile) {
+
+			logger.Info().Str("vkFile", vkFile).Str("pkFile", pkFile).Msg("Loading keys from disk")
+			pkData, _ := os.ReadFile(pkFile)
+			vkData, _ := os.ReadFile(vkFile)
+
+			pk := groth16.NewProvingKey(ecc.BW6_761)
+			vk := groth16.NewVerifyingKey(ecc.BW6_761)
+			_, err := pk.ReadFrom(bytes.NewReader(pkData))
+			if err != nil {
+				panic(err)
+			}
+			_, err = vk.ReadFrom(bytes.NewReader(vkData))
+			if err != nil {
+				panic(err)
+			}
+			globalPK = pk
+			globalVK = vk
+		} else {
+			logger.Info().Str("vkFile", vkFile).Str("pkFile", pkFile).Msg("Generating keys")
+			//fmt.Println("Generating pk, vk =>", pkFile, vkFile)
+			pk, vk, err := groth16.Setup(globalCCS)
+			if err != nil {
+				panic(err)
+			}
+			var bufPK bytes.Buffer
+			pk.WriteTo(&bufPK)
+			os.WriteFile(pkFile, bufPK.Bytes(), 0644)
+			var bufVK bytes.Buffer
+			vk.WriteTo(&bufVK)
+			os.WriteFile(vkFile, bufVK.Bytes(), 0644)
+
+			globalPK = pk
+			globalVK = vk
+		}
+	case "f2":
+		if _, err := os.Stat("_run_F2"); os.IsNotExist(err) {
+			os.Mkdir("_run_F2", 0755)
+		}
+		// 1) Charger/Compiler circuit
+		cssFile := "_run_F2/css"
+		var c CircuitTxF2
+		if _, err := os.Stat(cssFile); err == nil {
+			d, _ := os.ReadFile(cssFile)
+			ccs := groth16.NewCS(ecc.BW6_761)
+			ccs.ReadFrom(bytes.NewReader(d))
+			logger.Info().Str("cssFile", cssFile).Msg("Circuit loaded from disk")
+			globalCCS = ccs
+		} else {
+			//fmt.Println("Compiling circuit =>", cssFile)
+			ccs, err := frontend.Compile(ecc.BW6_761.ScalarField(), r1cs.NewBuilder, &c)
+			if err != nil {
+				panic(err)
+			}
+			var buf bytes.Buffer
+			ccs.WriteTo(&buf)
+			os.WriteFile(cssFile, buf.Bytes(), 0644)
+			globalCCS = ccs
+		}
+		// 2) Charger ou générer pk+vk
+		pkFile := "_run_F2/zk_pk"
+		vkFile := "_run_F2/zk_vk"
+		if fileExists(pkFile) && fileExists(vkFile) {
+
+			logger.Info().Str("vkFile", vkFile).Str("pkFile", pkFile).Msg("Loading keys from disk")
+			pkData, _ := os.ReadFile(pkFile)
+			vkData, _ := os.ReadFile(vkFile)
+
+			pk := groth16.NewProvingKey(ecc.BW6_761)
+			vk := groth16.NewVerifyingKey(ecc.BW6_761)
+			_, err := pk.ReadFrom(bytes.NewReader(pkData))
+			if err != nil {
+				panic(err)
+			}
+			_, err = vk.ReadFrom(bytes.NewReader(vkData))
+			if err != nil {
+				panic(err)
+			}
+			globalPK = pk
+			globalVK = vk
+		} else {
+			logger.Info().Str("vkFile", vkFile).Str("pkFile", pkFile).Msg("Generating keys")
+			//fmt.Println("Generating pk, vk =>", pkFile, vkFile)
+			pk, vk, err := groth16.Setup(globalCCS)
+			if err != nil {
+				panic(err)
+			}
+			var bufPK bytes.Buffer
+			pk.WriteTo(&bufPK)
+			os.WriteFile(pkFile, bufPK.Bytes(), 0644)
+			var bufVK bytes.Buffer
+			vk.WriteTo(&bufVK)
+			os.WriteFile(vkFile, bufVK.Bytes(), 0644)
+
+			globalPK = pk
+			globalVK = vk
+		}
+
 	case "register":
 		if _, err := os.Stat("_run_register"); os.IsNotExist(err) {
 			os.Mkdir("_run_register", 0755)
