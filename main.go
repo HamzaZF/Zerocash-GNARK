@@ -1243,6 +1243,8 @@ func TransactionNCoin(
 	switch coinCount {
 	case 2:
 		wc, _ = ip.BuildWitness2()
+	case 3:
+		wc, _ = ip.BuildWitness3()
 	default:
 		wc, _ = ip.BuildWitness2()
 	}
@@ -1255,7 +1257,7 @@ func TransactionNCoin(
 	}
 
 	// 4) Générer la preuve
-	proof, err := groth16.Prove(globalCCSN[2], globalPKN[2], w)
+	proof, err := groth16.Prove(globalCCSN[coinCount], globalPKN[coinCount], w)
 	if err != nil {
 		panic(err)
 	}
@@ -1548,7 +1550,7 @@ func TransactionF1(inp zg.TxProverInputHighLevelF1, globalCCSF1 constraint.Const
 	}
 }
 
-func TransactionFN(inp zg.TxProverInputHighLevelFN, globalCCSF1 constraint.ConstraintSystem, globalPKF1 groth16.ProvingKey, conn net.Conn, ID int, targetAddress string, targetID int) zn.TxFNPayload {
+func TransactionFN(inp zg.TxProverInputHighLevelFN, globalCCSFN []constraint.ConstraintSystem, globalPKFN []groth16.ProvingKey, conn net.Conn, ID int, targetAddress string, targetID int) zn.TxFNPayload {
 
 	// Conversion des champs coin‑spécifiques de [][]byte en []frontend.Variable pour chaque coin.
 	coinCount := len(inp.InCoin)
@@ -1578,119 +1580,131 @@ func TransactionFN(inp zg.TxProverInputHighLevelFN, globalCCSF1 constraint.Const
 	}
 
 	var ip_ zg.InputTxFN
-	var c frontend.Circuit
+	//var c frontend.Circuit
 	var buf bytes.Buffer
+
+	// // --- Extraction des éléments chiffrés pour le coin 0 ---
+	// pk_enc0 := inp.C[0][0].Bytes()
+	// pk_enc0_bytes := make([]byte, len(pk_enc0))
+	// copy(pk_enc0_bytes, pk_enc0[:])
+
+	// coins_enc0 := inp.C[0][3].Bytes()
+	// coins_enc0_bytes := make([]byte, len(coins_enc0))
+	// copy(coins_enc0_bytes, coins_enc0[:])
+
+	// energy_enc0 := inp.C[0][4].Bytes()
+	// energy_enc0_bytes := make([]byte, len(energy_enc0))
+	// copy(energy_enc0_bytes, energy_enc0[:])
+
+	// skIn_enc0 := inp.C[0][1].Bytes()
+	// skIn_enc0_bytes := make([]byte, len(skIn_enc0))
+	// copy(skIn_enc0_bytes, skIn_enc0[:])
+
+	// bid_enc0 := inp.C[0][2].Bytes()
+	// bid_enc0_bytes := make([]byte, len(bid_enc0))
+	// copy(bid_enc0_bytes, bid_enc0[:])
+
+	// // --- Extraction des éléments chiffrés pour le coin 1 ---
+	// pk_enc1 := inp.C[1][0].Bytes()
+	// pk_enc1_bytes := make([]byte, len(pk_enc1))
+	// copy(pk_enc1_bytes, pk_enc1[:])
+
+	// coins_enc1 := inp.C[1][3].Bytes()
+	// coins_enc1_bytes := make([]byte, len(coins_enc1))
+	// copy(coins_enc1_bytes, coins_enc1[:])
+
+	// energy_enc1 := inp.C[1][4].Bytes()
+	// energy_enc1_bytes := make([]byte, len(energy_enc1))
+	// copy(energy_enc1_bytes, energy_enc1[:])
+
+	// skIn_enc1 := inp.C[1][1].Bytes()
+	// skIn_enc1_bytes := make([]byte, len(skIn_enc1))
+	// copy(skIn_enc1_bytes, skIn_enc1[:])
+
+	// bid_enc1 := inp.C[1][2].Bytes()
+	// bid_enc1_bytes := make([]byte, len(bid_enc1))
+	// copy(bid_enc1_bytes, bid_enc1[:])
+
+	// // Constitution des tableaux d'encryption pour chaque coin.
+	// var C0 [5][]byte = [5][]byte{
+	// 	pk_enc0_bytes,
+	// 	skIn_enc0_bytes,
+	// 	bid_enc0_bytes,
+	// 	coins_enc0_bytes,
+	// 	energy_enc0_bytes,
+	// }
+	// var C1 [5][]byte = [5][]byte{
+	// 	pk_enc1_bytes,
+	// 	skIn_enc1_bytes,
+	// 	bid_enc1_bytes,
+	// 	coins_enc1_bytes,
+	// 	energy_enc1_bytes,
+	// }
+
+	res := ExtractEncryptedCoins(&inp, coinCount)
+
+	// Construction de l'input pour le circuit multi‑coin (N=2)
+	ip_ = zg.InputTxFN{
+		InCoin:    inCoinConv,
+		InEnergy:  inEnergyConv,
+		InCm:      inCmConv,
+		InSn:      inSnConv,
+		InPk:      inPkConv,
+		InSk:      inSkConv,
+		InRho:     inRhoConv,
+		InRand:    inRandConv,
+		OutCoin:   outCoinConv,
+		OutEnergy: outEnergyConv,
+		OutCm:     outCmConv,
+		OutSn:     outSnConv,
+		OutPk:     outPkConv,
+		OutRho:    outRhoConv,
+		OutRand:   outRandConv,
+		// Pour le champ C, on construit un slice contenant les tableaux pour chaque coin.
+		C:      res,        //[][5][]byte{C0, C1},
+		DecVal: inp.DecVal, // On suppose que inp.DecVal est déjà un slice avec 2 éléments.
+		// Paramètres globaux
+		SkT:    inp.SkT,
+		EncKey: inp.EncKey,
+		R:      RConv, //new(big.Int).SetBytes(inp.R), // On suppose que inp.R est un slice (ex. avec la valeur globale en première position).
+		G:      inp.G,
+		G_b:    inp.G_b,
+		G_r:    inp.G_r,
+	}
+
+	var err error
+	var cc frontend.Circuit
+	// Construction du witness via la méthode BuildWitness de InputTxFN.
 
 	switch coinCount {
 	case 2:
-		// --- Extraction des éléments chiffrés pour le coin 0 ---
-		pk_enc0 := inp.C[0][0].Bytes()
-		pk_enc0_bytes := make([]byte, len(pk_enc0))
-		copy(pk_enc0_bytes, pk_enc0[:])
-
-		coins_enc0 := inp.C[0][3].Bytes()
-		coins_enc0_bytes := make([]byte, len(coins_enc0))
-		copy(coins_enc0_bytes, coins_enc0[:])
-
-		energy_enc0 := inp.C[0][4].Bytes()
-		energy_enc0_bytes := make([]byte, len(energy_enc0))
-		copy(energy_enc0_bytes, energy_enc0[:])
-
-		skIn_enc0 := inp.C[0][1].Bytes()
-		skIn_enc0_bytes := make([]byte, len(skIn_enc0))
-		copy(skIn_enc0_bytes, skIn_enc0[:])
-
-		bid_enc0 := inp.C[0][2].Bytes()
-		bid_enc0_bytes := make([]byte, len(bid_enc0))
-		copy(bid_enc0_bytes, bid_enc0[:])
-
-		// --- Extraction des éléments chiffrés pour le coin 1 ---
-		pk_enc1 := inp.C[1][0].Bytes()
-		pk_enc1_bytes := make([]byte, len(pk_enc1))
-		copy(pk_enc1_bytes, pk_enc1[:])
-
-		coins_enc1 := inp.C[1][3].Bytes()
-		coins_enc1_bytes := make([]byte, len(coins_enc1))
-		copy(coins_enc1_bytes, coins_enc1[:])
-
-		energy_enc1 := inp.C[1][4].Bytes()
-		energy_enc1_bytes := make([]byte, len(energy_enc1))
-		copy(energy_enc1_bytes, energy_enc1[:])
-
-		skIn_enc1 := inp.C[1][1].Bytes()
-		skIn_enc1_bytes := make([]byte, len(skIn_enc1))
-		copy(skIn_enc1_bytes, skIn_enc1[:])
-
-		bid_enc1 := inp.C[1][2].Bytes()
-		bid_enc1_bytes := make([]byte, len(bid_enc1))
-		copy(bid_enc1_bytes, bid_enc1[:])
-
-		// Constitution des tableaux d'encryption pour chaque coin.
-		var C0 [5][]byte = [5][]byte{
-			pk_enc0_bytes,
-			skIn_enc0_bytes,
-			bid_enc0_bytes,
-			coins_enc0_bytes,
-			energy_enc0_bytes,
-		}
-		var C1 [5][]byte = [5][]byte{
-			pk_enc1_bytes,
-			skIn_enc1_bytes,
-			bid_enc1_bytes,
-			coins_enc1_bytes,
-			energy_enc1_bytes,
-		}
-
-		// Construction de l'input pour le circuit multi‑coin (N=2)
-		ip_ = zg.InputTxFN{
-			InCoin:    inCoinConv,
-			InEnergy:  inEnergyConv,
-			InCm:      inCmConv,
-			InSn:      inSnConv,
-			InPk:      inPkConv,
-			InSk:      inSkConv,
-			InRho:     inRhoConv,
-			InRand:    inRandConv,
-			OutCoin:   outCoinConv,
-			OutEnergy: outEnergyConv,
-			OutCm:     outCmConv,
-			OutSn:     outSnConv,
-			OutPk:     outPkConv,
-			OutRho:    outRhoConv,
-			OutRand:   outRandConv,
-			// Pour le champ C, on construit un slice contenant les tableaux pour chaque coin.
-			C:      [][5][]byte{C0, C1},
-			DecVal: inp.DecVal, // On suppose que inp.DecVal est déjà un slice avec 2 éléments.
-			// Paramètres globaux
-			SkT:    inp.SkT,
-			EncKey: inp.EncKey,
-			R:      RConv, //new(big.Int).SetBytes(inp.R), // On suppose que inp.R est un slice (ex. avec la valeur globale en première position).
-			G:      inp.G,
-			G_b:    inp.G_b,
-			G_r:    inp.G_r,
-		}
-
-		var err error
-		// Construction du witness via la méthode BuildWitness de InputTxFN.
-		c, err = ip_.BuildWitness()
+		cc, err = ip_.BuildWitness2()
 		if err != nil {
 			panic(err)
 		}
-
-		//fmt.Println("CIRCUIT F2 (N=2)")
-		w, _ := frontend.NewWitness(c, ecc.BW6_761.ScalarField())
-
-		fmt.Println("GÉNÉRATION DE LA PREUVE...")
-		proof, err := groth16.Prove(globalCCSF1, globalPKF1, w)
+	case 3:
+		cc, err = ip_.BuildWitness3()
 		if err != nil {
 			panic(err)
 		}
-		fmt.Println("PREUVE GÉNÉRÉE")
-
-		proof.WriteTo(&buf)
 	default:
-		return zn.TxFNPayload{}
+		cc, err = ip_.BuildWitness2()
+		if err != nil {
+			panic(err)
+		}
 	}
+
+	//fmt.Println("CIRCUIT F2 (N=2)")
+	w, _ := frontend.NewWitness(cc, ecc.BW6_761.ScalarField())
+
+	fmt.Println("GÉNÉRATION DE LA PREUVE...")
+	proof, err := groth16.Prove(globalCCSFN[coinCount], globalPKFN[coinCount], w)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println("PREUVE GÉNÉRÉE")
+
+	proof.WriteTo(&buf)
 
 	return zn.TxFNPayload{
 		Proof: buf.Bytes(),
@@ -2364,6 +2378,21 @@ func NewAuctionHandler(node *Node) *AuctionHandler {
 	return &AuctionHandler{Node: node}
 }
 
+func ExtractEncryptedCoins(inp_ *zg.TxProverInputHighLevelFN, coinCount int) [][5][]byte {
+	coinsEnc := make([][5][]byte, coinCount)
+	for i := 0; i < coinCount; i++ {
+		var coin [5][]byte
+		for j := 0; j < 5; j++ {
+			data := inp_.C[i][j].Bytes()
+			copyData := make([]byte, len(data))
+			copy(copyData, data[:])
+			coin[j] = copyData
+		}
+		coinsEnc[i] = coin
+	}
+	return coinsEnc
+}
+
 func (drh *AuctionHandler) HandleMessage(msg zn.Message, conn net.Conn) {
 	logger := zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr}).With().Timestamp().Logger()
 	// Example implementation:
@@ -2517,13 +2546,22 @@ func (drh *AuctionHandler) HandleMessage(msg zn.Message, conn net.Conn) {
 	ip.RhoNew = rhoNewList
 	ip.RandNew = randNewList
 
-	//error if N!=2
-	if N != 2 {
-		panic("N must be 2")
+	// //error if N!=2
+	// if N != 2 {
+	// 	panic("N must be 2")
+	// }
+
+	var wc frontend.Circuit
+
+	switch N {
+	case 2:
+		wc, _ = ip.BuildWitness2()
+	case 3:
+		wc, _ = ip.BuildWitness3()
 	}
 
 	// Construction du witness
-	wc, _ := ip.BuildWitness2()
+	//wc, _ := ip.BuildWitness2()
 	w, _ := frontend.NewWitness(wc, ecc.BW6_761.ScalarField(), frontend.PublicOnly())
 
 	wPub, _ := w.Public()
@@ -2538,9 +2576,17 @@ func (drh *AuctionHandler) HandleMessage(msg zn.Message, conn net.Conn) {
 	if err != nil {
 		fmt.Println("invalid proof =>", err)
 	}
-	err = groth16.Verify(p, globalVK2Coin, w)
-	if err != nil {
-		fmt.Println("Verify fail =>", err)
+	switch N {
+	case 2:
+		err = groth16.Verify(p, globalVK2Coin, w)
+		if err != nil {
+			fmt.Println("Verify fail =>", err)
+		}
+	case 3:
+		err = groth16.Verify(p, globalVK3Coin, w)
+		if err != nil {
+			fmt.Println("Verify fail =>", err)
+		}
 	}
 
 	/////////////
@@ -2575,63 +2621,65 @@ func (drh *AuctionHandler) HandleMessage(msg zn.Message, conn net.Conn) {
 		RConv = append(RConv, new(big.Int).SetBytes(inp_.R[i])) //NOT GOOD
 	}
 
-	// --- Extraction des éléments chiffrés pour le coin 0 ---
-	pk_enc0 := inp_.C[0][0].Bytes()
-	pk_enc0_bytes := make([]byte, len(pk_enc0))
-	copy(pk_enc0_bytes, pk_enc0[:])
+	coinsEnc := ExtractEncryptedCoins(&inp_, coinCount)
 
-	coins_enc0 := inp_.C[0][3].Bytes()
-	coins_enc0_bytes := make([]byte, len(coins_enc0))
-	copy(coins_enc0_bytes, coins_enc0[:])
+	// // --- Extraction des éléments chiffrés pour le coin 0 ---
+	// pk_enc0 := inp_.C[0][0].Bytes()
+	// pk_enc0_bytes := make([]byte, len(pk_enc0))
+	// copy(pk_enc0_bytes, pk_enc0[:])
 
-	energy_enc0 := inp_.C[0][4].Bytes()
-	energy_enc0_bytes := make([]byte, len(energy_enc0))
-	copy(energy_enc0_bytes, energy_enc0[:])
+	// coins_enc0 := inp_.C[0][3].Bytes()
+	// coins_enc0_bytes := make([]byte, len(coins_enc0))
+	// copy(coins_enc0_bytes, coins_enc0[:])
 
-	skIn_enc0 := inp_.C[0][1].Bytes()
-	skIn_enc0_bytes := make([]byte, len(skIn_enc0))
-	copy(skIn_enc0_bytes, skIn_enc0[:])
+	// energy_enc0 := inp_.C[0][4].Bytes()
+	// energy_enc0_bytes := make([]byte, len(energy_enc0))
+	// copy(energy_enc0_bytes, energy_enc0[:])
 
-	bid_enc0 := inp_.C[0][2].Bytes()
-	bid_enc0_bytes := make([]byte, len(bid_enc0))
-	copy(bid_enc0_bytes, bid_enc0[:])
+	// skIn_enc0 := inp_.C[0][1].Bytes()
+	// skIn_enc0_bytes := make([]byte, len(skIn_enc0))
+	// copy(skIn_enc0_bytes, skIn_enc0[:])
 
-	// --- Extraction des éléments chiffrés pour le coin 1 ---
-	pk_enc1 := inp_.C[1][0].Bytes()
-	pk_enc1_bytes := make([]byte, len(pk_enc1))
-	copy(pk_enc1_bytes, pk_enc1[:])
+	// bid_enc0 := inp_.C[0][2].Bytes()
+	// bid_enc0_bytes := make([]byte, len(bid_enc0))
+	// copy(bid_enc0_bytes, bid_enc0[:])
 
-	coins_enc1 := inp_.C[1][3].Bytes()
-	coins_enc1_bytes := make([]byte, len(coins_enc1))
-	copy(coins_enc1_bytes, coins_enc1[:])
+	// // --- Extraction des éléments chiffrés pour le coin 1 ---
+	// pk_enc1 := inp_.C[1][0].Bytes()
+	// pk_enc1_bytes := make([]byte, len(pk_enc1))
+	// copy(pk_enc1_bytes, pk_enc1[:])
 
-	energy_enc1 := inp_.C[1][4].Bytes()
-	energy_enc1_bytes := make([]byte, len(energy_enc1))
-	copy(energy_enc1_bytes, energy_enc1[:])
+	// coins_enc1 := inp_.C[1][3].Bytes()
+	// coins_enc1_bytes := make([]byte, len(coins_enc1))
+	// copy(coins_enc1_bytes, coins_enc1[:])
 
-	skIn_enc1 := inp_.C[1][1].Bytes()
-	skIn_enc1_bytes := make([]byte, len(skIn_enc1))
-	copy(skIn_enc1_bytes, skIn_enc1[:])
+	// energy_enc1 := inp_.C[1][4].Bytes()
+	// energy_enc1_bytes := make([]byte, len(energy_enc1))
+	// copy(energy_enc1_bytes, energy_enc1[:])
 
-	bid_enc1 := inp_.C[1][2].Bytes()
-	bid_enc1_bytes := make([]byte, len(bid_enc1))
-	copy(bid_enc1_bytes, bid_enc1[:])
+	// skIn_enc1 := inp_.C[1][1].Bytes()
+	// skIn_enc1_bytes := make([]byte, len(skIn_enc1))
+	// copy(skIn_enc1_bytes, skIn_enc1[:])
 
-	// Constitution des tableaux d'encryption pour chaque coin.
-	var C0 [5][]byte = [5][]byte{
-		pk_enc0_bytes,
-		skIn_enc0_bytes,
-		bid_enc0_bytes,
-		coins_enc0_bytes,
-		energy_enc0_bytes,
-	}
-	var C1 [5][]byte = [5][]byte{
-		pk_enc1_bytes,
-		skIn_enc1_bytes,
-		bid_enc1_bytes,
-		coins_enc1_bytes,
-		energy_enc1_bytes,
-	}
+	// bid_enc1 := inp_.C[1][2].Bytes()
+	// bid_enc1_bytes := make([]byte, len(bid_enc1))
+	// copy(bid_enc1_bytes, bid_enc1[:])
+
+	// // Constitution des tableaux d'encryption pour chaque coin.
+	// var C0 [5][]byte = [5][]byte{
+	// 	pk_enc0_bytes,
+	// 	skIn_enc0_bytes,
+	// 	bid_enc0_bytes,
+	// 	coins_enc0_bytes,
+	// 	energy_enc0_bytes,
+	// }
+	// var C1 [5][]byte = [5][]byte{
+	// 	pk_enc1_bytes,
+	// 	skIn_enc1_bytes,
+	// 	bid_enc1_bytes,
+	// 	coins_enc1_bytes,
+	// 	energy_enc1_bytes,
+	// }
 
 	// Construction de l'input pour le circuit multi‑coin (N=2)
 	ip_ := zg.InputTxFN{
@@ -2651,7 +2699,7 @@ func (drh *AuctionHandler) HandleMessage(msg zn.Message, conn net.Conn) {
 		OutRho:    outRhoConv,
 		OutRand:   outRandConv,
 		// Pour le champ C, on construit un slice contenant les tableaux pour chaque coin.
-		C:      [][5][]byte{C0, C1},
+		C:      coinsEnc,    //[][5][]byte{C0, C1},
 		DecVal: inp_.DecVal, // On suppose que inp_.DecVal est déjà un slice avec 2 éléments.
 		// Paramètres globaux
 		SkT:    inp_.SkT,
@@ -2663,9 +2711,19 @@ func (drh *AuctionHandler) HandleMessage(msg zn.Message, conn net.Conn) {
 	}
 
 	// Construction du witness via la méthode BuildWitness de InputTxFN.
-	c, err := ip_.BuildWitness()
-	if err != nil {
-		panic(err)
+	var c frontend.Circuit
+	var e error
+	switch coinCount {
+	case 2:
+		c, e = ip_.BuildWitness2()
+		if e != nil {
+			panic(err)
+		}
+	case 3:
+		c, e = ip_.BuildWitness3()
+		if e != nil {
+			panic(err)
+		}
 	}
 
 	w, _ = frontend.NewWitness(c, ecc.BW6_761.ScalarField(), frontend.PublicOnly())
@@ -2682,9 +2740,17 @@ func (drh *AuctionHandler) HandleMessage(msg zn.Message, conn net.Conn) {
 	if err != nil {
 		fmt.Println("invalid proof =>", err)
 	}
-	err = groth16.Verify(p, globalVKF2, w)
-	if err != nil {
-		fmt.Println("Verify fail =>", err)
+	switch coinCount {
+	case 2:
+		err = groth16.Verify(p, globalVKF2, w)
+		if err != nil {
+			fmt.Println("Verify fail =>", err)
+		}
+	case 3:
+		err = groth16.Verify(p, globalVKF3, w)
+		if err != nil {
+			fmt.Println("Verify fail =>", err)
+		}
 	}
 
 	/////////////
@@ -3248,6 +3314,10 @@ var globalCCS2Coin constraint.ConstraintSystem
 var globalPK2Coin groth16.ProvingKey
 var globalVK2Coin groth16.VerifyingKey
 
+var globalCCS3Coin constraint.ConstraintSystem
+var globalPK3Coin groth16.ProvingKey
+var globalVK3Coin groth16.VerifyingKey
+
 var globalCCSF1 constraint.ConstraintSystem
 var globalPKF1 groth16.ProvingKey
 var globalVKF1 groth16.VerifyingKey
@@ -3255,6 +3325,10 @@ var globalVKF1 groth16.VerifyingKey
 var globalCCSF2 constraint.ConstraintSystem
 var globalPKF2 groth16.ProvingKey
 var globalVKF2 groth16.VerifyingKey
+
+var globalCCSF3 constraint.ConstraintSystem
+var globalPKF3 groth16.ProvingKey
+var globalVKF3 groth16.VerifyingKey
 
 var CmList [][]byte
 var SnList [][]byte
@@ -3284,6 +3358,9 @@ func (n *Node) Auction(validatorAddress string, TxListTemp []zn.Transaction, Aux
 	//Decipher Caux
 	var decCinList []*zg.DecryptedValues
 	for i := 0; i < len(TxListTemp); i++ {
+		fmt.Println("TxListTemp[i].Id=", TxListTemp[i].Id)
+		fmt.Println("n.DHExchanges[TxListTemp[i].Id]=", n.DHExchanges[TxListTemp[i].Id])
+		fmt.Println("n.DHExchanges[TxListTemp[i].Id].SharedSecret=", n.DHExchanges[TxListTemp[i].Id].SharedSecret)
 		decValues, err := zg.BuildDecMimc(n.DHExchanges[TxListTemp[i].Id].SharedSecret, AuxList[i].C)
 		if err != nil {
 			fmt.Println("Error deciphering Caux")
@@ -3334,7 +3411,6 @@ func (n *Node) Auction(validatorAddress string, TxListTemp []zn.Transaction, Aux
 
 	for i := 0; i < coinCount; i++ {
 		// Ici, on suppose que pour chaque coin, les données proviennent des mêmes index (par exemple, [1])
-		// Vous pouvez adapter ces indices si les données varient d'un coin à l'autre.
 		inp.OldNote[i] = nInList[i]
 		inp.OldSk[i] = decValuesList[i].SkIn
 		inp.NewVal[i] = zg.Gamma{
@@ -3371,10 +3447,12 @@ func (n *Node) Auction(validatorAddress string, TxListTemp []zn.Transaction, Aux
 	globalCCSNCoin = append(globalCCSNCoin, globalCCS2Coin) //dummy
 	globalCCSNCoin = append(globalCCSNCoin, globalCCSOneCoin)
 	globalCCSNCoin = append(globalCCSNCoin, globalCCS2Coin)
+	globalCCSNCoin = append(globalCCSNCoin, globalCCS3Coin)
 
 	globalPKNCoin = append(globalPKNCoin, globalPK2Coin) //dummy
 	globalPKNCoin = append(globalPKNCoin, globalPKOneCoin)
 	globalPKNCoin = append(globalPKNCoin, globalPK2Coin)
+	globalPKNCoin = append(globalPKNCoin, globalPK3Coin)
 
 	tx_out := TransactionNCoin(inp, globalCCSNCoin, globalPKNCoin, conn, n.ID, targetAddresses[0], targetIdList[0], rhoNewList, randNewList)
 
@@ -3474,7 +3552,20 @@ func (n *Node) Auction(validatorAddress string, TxListTemp []zn.Transaction, Aux
 		inp_.EncKey[i] = n.DHExchanges[targetIdList[i]].SharedSecret
 	}
 
-	tx_FN := TransactionFN(inp_, globalCCSF2, globalPKF2, conn, n.ID, targetAddresses[0], targetIdList[0])
+	var globalCCSFN []constraint.ConstraintSystem
+	var globalPKFN []groth16.ProvingKey
+
+	globalCCSFN = append(globalCCSFN, globalCCSF1) //dummy
+	globalCCSFN = append(globalCCSFN, globalCCSF1)
+	globalCCSFN = append(globalCCSFN, globalCCSF2)
+	globalCCSFN = append(globalCCSFN, globalCCSF3)
+
+	globalPKFN = append(globalPKFN, globalPKF1) //dummy
+	globalPKFN = append(globalPKFN, globalPKF1)
+	globalPKFN = append(globalPKFN, globalPKF2)
+	globalPKFN = append(globalPKFN, globalPKF3)
+
+	tx_FN := TransactionFN(inp_, globalCCSFN, globalPKFN, conn, n.ID, targetAddresses[0], targetIdList[0])
 
 	txAuction := zn.AuctionResultN{
 		TxOut:    tx_out,
@@ -3499,6 +3590,16 @@ func (n *Node) Auction(validatorAddress string, TxListTemp []zn.Transaction, Aux
 
 	return txAuction
 
+}
+
+func DiffieHellmanInit(nodes []*Node) {
+	n := len(nodes)
+	for i := 0; i < n; i++ {
+		for j := i + 1; j < n; j++ {
+			nodes[i].DiffieHellmanKeyExchange(nodes[j].Address)
+			nodes[j].DiffieHellmanKeyExchange(nodes[i].Address)
+		}
+	}
 }
 
 func main() {
@@ -3543,22 +3644,38 @@ func main() {
 	globalCCSRegister, globalPKRegister, globalVKRegister = zg.LoadOrGenerateKeys("register")
 	globalCCSOneCoin, globalPKOneCoin, globalVKOneCoin = zg.LoadOrGenerateKeys("oneCoin")
 	globalCCS2Coin, globalPK2Coin, globalVK2Coin = zg.LoadOrGenerateKeys("2coin")
+	globalCCS3Coin, globalPK3Coin, globalVK3Coin = zg.LoadOrGenerateKeys("3coin")
 	globalCCSF1, globalPKF1, globalVKF1 = zg.LoadOrGenerateKeys("f2")
-	globalCCSF2, globalPKF2, globalVKF2 = zg.LoadOrGenerateKeys("fn")
+	globalCCSF2, globalPKF2, globalVKF2 = zg.LoadOrGenerateKeys("f2")
+	globalCCSF3, globalPKF3, globalVKF3 = zg.LoadOrGenerateKeys("f3")
 
 	///////////// Diffie–Hellman key exchange //////////////
-	nodes[1].DiffieHellmanKeyExchange(nodes[2].Address)
-	nodes[2].DiffieHellmanKeyExchange(nodes[3].Address)
-	nodes[3].DiffieHellmanKeyExchange(nodes[1].Address)
-	//nodes[2].DiffieHellmanKeyExchange(nodes[1].Address)
+	// nodes[1].DiffieHellmanKeyExchange(nodes[2].Address)
+	// nodes[2].DiffieHellmanKeyExchange(nodes[3].Address)
+	// nodes[3].DiffieHellmanKeyExchange(nodes[4].Address)
+	// nodes[4].DiffieHellmanKeyExchange(nodes[1].Address)
+	// nodes[1].DiffieHellmanKeyExchange(nodes[3].Address)
 
-	nodes[1].DiffieHellmanKeyExchange(nodes[0].Address)
-	nodes[2].DiffieHellmanKeyExchange(nodes[0].Address)
-	nodes[3].DiffieHellmanKeyExchange(nodes[0].Address)
+	//DiffieHellmanInit(nodes)
 
+	n := len(nodes)
+	for i := 0; i < n; i++ {
+		for j := i + 1; j < n; j++ {
+			nodes[i].DiffieHellmanKeyExchange(nodes[j].Address)
+			nodes[j].DiffieHellmanKeyExchange(nodes[i].Address)
+		}
+		nodes[i].DiffieHellmanKeyExchange(nodes[0].Address)
+	}
+
+	// nodes[1].DiffieHellmanKeyExchange(nodes[0].Address)
+	// nodes[2].DiffieHellmanKeyExchange(nodes[0].Address)
+	// nodes[3].DiffieHellmanKeyExchange(nodes[0].Address)
+	// nodes[4].DiffieHellmanKeyExchange(nodes[0].Address)
+
+	max := 4
 	//time.Sleep(1 * time.Second)
 	for {
-		if len(nodes[1].DHExchanges) == 3 && len(nodes[2].DHExchanges) == 3 && len(nodes[3].DHExchanges) == 3 {
+		if len(nodes[1].DHExchanges) == max && len(nodes[2].DHExchanges) == max && len(nodes[3].DHExchanges) == max {
 			break
 		}
 	}
@@ -3628,16 +3745,44 @@ func main() {
 	pkOut_2 := GeneratePk(sk_out_2)
 	bid_2 := big.NewInt(15) //bid energy
 
-	nInList := []zg.Note{nIn_1, nIn_2}
-	targetIdList := []int{nodes[1].ID, nodes[2].ID}
-	targetAddresses := []string{nodes[1].Address, nodes[2].Address}
+	// nInList := []zg.Note{nIn_1, nIn_2}
+	// targetIdList := []int{nodes[1].ID, nodes[2].ID}
+	// targetAddresses := []string{nodes[1].Address, nodes[2].Address}
+
+	/////////////////
+	///////Notes of nodes[3] (nBase, nIn, nOut)
+	/////////////////
+
+	sk_base_3 := GenerateSk()
+	pkBase_3 := GeneratePk(sk_base_3)
+	rho_base_3 := big.NewInt(1111).Bytes()
+	rand_base_3 := big.NewInt(2222).Bytes()
+	value_base_3 := zg.NewGamma(15, 1)
+	nBase_3 := GenerateNote(value_base_3, pkBase_3, rho_base_3, rand_base_3)
+
+	sk_in_3 := GenerateSk()
+	pkIn_3 := GeneratePk(sk_in_3)
+	rho_in_3 := big.NewInt(1111).Bytes()
+	rand_in_3 := big.NewInt(2222).Bytes()
+	gammaIn_3 := zg.NewGamma(15, 1)
+	nIn_3 := GenerateNote(gammaIn_3, pkIn_3, rho_in_3, rand_in_3)
+
+	//new1 := zg.NewGamma(12, 5)
+	sk_out_3 := GenerateSk()
+	pkOut_3 := GeneratePk(sk_out_3)
+	bid_3 := big.NewInt(15) //bid energy
+
+	nInList := []zg.Note{nIn_1, nIn_2, nIn_3}
+	targetIdList := []int{nodes[1].ID, nodes[2].ID, nodes[3].ID}
+	targetAddresses := []string{nodes[1].Address, nodes[2].Address, nodes[3].Address}
 
 	/////////////////
 	///////Send register transactions
 	/////////////////
 
-	nodes[1].SendTransactionRegisterN(nodes[0].Address, nodes[3].Address, nodes[3].ID, globalCCSOneCoin, globalPKOneCoin, globalVKOneCoin, globalCCSRegister, globalPKRegister, globalVKRegister, nBase_1, sk_base_1 /*new1,*/, pkIn_1, gammaIn_1, pkOut_1, sk_in_1, bid_1, nIn_1, true)
-	nodes[2].SendTransactionRegisterN(nodes[0].Address, nodes[3].Address, nodes[3].ID, globalCCSOneCoin, globalPKOneCoin, globalVKOneCoin, globalCCSRegister, globalPKRegister, globalVKRegister, nBase_2, sk_base_2 /*new1,*/, pkIn_2, gammaIn_2, pkOut_2, sk_in_2, bid_2, nIn_2, true)
+	nodes[1].SendTransactionRegisterN(nodes[0].Address, nodes[4].Address, nodes[4].ID, globalCCSOneCoin, globalPKOneCoin, globalVKOneCoin, globalCCSRegister, globalPKRegister, globalVKRegister, nBase_1, sk_base_1 /*new1,*/, pkIn_1, gammaIn_1, pkOut_1, sk_in_1, bid_1, nIn_1, true)
+	nodes[2].SendTransactionRegisterN(nodes[0].Address, nodes[4].Address, nodes[4].ID, globalCCSOneCoin, globalPKOneCoin, globalVKOneCoin, globalCCSRegister, globalPKRegister, globalVKRegister, nBase_2, sk_base_2 /*new1,*/, pkIn_2, gammaIn_2, pkOut_2, sk_in_2, bid_2, nIn_2, true)
+	nodes[3].SendTransactionRegisterN(nodes[0].Address, nodes[4].Address, nodes[4].ID, globalCCSOneCoin, globalPKOneCoin, globalVKOneCoin, globalCCSRegister, globalPKRegister, globalVKRegister, nBase_3, sk_base_3 /*new1,*/, pkIn_3, gammaIn_3, pkOut_3, sk_in_3, bid_3, nIn_3, true)
 
 	time.Sleep(6 * time.Second)
 
@@ -3647,7 +3792,7 @@ func main() {
 	// 	}
 	// }
 
-	nodes[3].Auction(nodes[0].Address, TxListTemp, AuxList, nInList, targetIdList, targetAddresses)
+	nodes[4].Auction(nodes[0].Address, TxListTemp, AuxList, nInList, targetIdList, targetAddresses)
 
 	/////////////////
 	///////Auction phase
