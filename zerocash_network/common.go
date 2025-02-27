@@ -101,6 +101,7 @@ type TxDefaultOneCoinPayload struct {
 	TargetID      int
 	PublicWitness []byte
 	EncVal        [6]bls12377_fp.Element
+	Inp           zg.InputProverDefaultOneCoin
 }
 
 type TxDefaultNCoinPayload struct {

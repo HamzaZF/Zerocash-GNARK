@@ -3520,6 +3520,69 @@ func LoadOrGenerateKeys(circuit_type string) (constraint.ConstraintSystem, groth
 			globalPK = pk
 			globalVK = vk
 		}
+	case "draw":
+		if _, err := os.Stat("_run_draw"); os.IsNotExist(err) {
+			os.Mkdir("_run_draw", 0755)
+		}
+		// 1) Charger/Compiler circuit
+		cssFile := "_run_draw/css"
+		var c CircuitWithdraw
+		if _, err := os.Stat(cssFile); err == nil {
+			d, _ := os.ReadFile(cssFile)
+			ccs := groth16.NewCS(ecc.BW6_761)
+			ccs.ReadFrom(bytes.NewReader(d))
+			logger.Info().Str("cssFile", cssFile).Msg("Circuit loaded from disk")
+			globalCCS = ccs
+		} else {
+			//fmt.Println("Compiling circuit =>", cssFile)
+			ccs, err := frontend.Compile(ecc.BW6_761.ScalarField(), r1cs.NewBuilder, &c)
+			if err != nil {
+				panic(err)
+			}
+			var buf bytes.Buffer
+			ccs.WriteTo(&buf)
+			os.WriteFile(cssFile, buf.Bytes(), 0644)
+			globalCCS = ccs
+		}
+		// 2) Charger ou générer pk+vk
+		pkFile := "_run_draw/zk_pk"
+		vkFile := "_run_draw/zk_vk"
+		if fileExists(pkFile) && fileExists(vkFile) {
+
+			logger.Info().Str("vkFile", vkFile).Str("pkFile", pkFile).Msg("Loading keys from disk")
+			pkData, _ := os.ReadFile(pkFile)
+			vkData, _ := os.ReadFile(vkFile)
+
+			pk := groth16.NewProvingKey(ecc.BW6_761)
+			vk := groth16.NewVerifyingKey(ecc.BW6_761)
+			_, err := pk.ReadFrom(bytes.NewReader(pkData))
+			if err != nil {
+				panic(err)
+			}
+			_, err = vk.ReadFrom(bytes.NewReader(vkData))
+			if err != nil {
+				panic(err)
+			}
+			globalPK = pk
+			globalVK = vk
+		} else {
+			logger.Info().Str("vkFile", vkFile).Str("pkFile", pkFile).Msg("Generating keys")
+			//fmt.Println("Generating pk, vk =>", pkFile, vkFile)
+			pk, vk, err := groth16.Setup(globalCCS)
+			if err != nil {
+				panic(err)
+			}
+			var bufPK bytes.Buffer
+			pk.WriteTo(&bufPK)
+			os.WriteFile(pkFile, bufPK.Bytes(), 0644)
+			var bufVK bytes.Buffer
+			vk.WriteTo(&bufVK)
+			os.WriteFile(vkFile, bufVK.Bytes(), 0644)
+
+			globalPK = pk
+			globalVK = vk
+		}
+
 	}
 
 	return globalCCS, globalPK, globalVK
@@ -4162,3 +4225,490 @@ func (ip *InputTxFN) BuildWitness3() (frontend.Circuit, error) {
 
 	return &c, nil
 }
+
+/////////////
+
+// CircuitWithdraw formalise l’algo 4 (Withdraw).
+// Il faut prouver :
+// 1) snIn = PRF(skIn, rhoIn)
+// 2) cmOut = Com(Γout || pkOut || rhoOut, rOut)
+// 3) cipherAux = Enc(pkT, b, skIn, pkOut)   (avec la bonne aléa)
+type CircuitWithdraw struct {
+	// ----- Variables PUBLIQUES -----
+	SnIn  frontend.Variable    `gnark:",public"` // snᵢ^(in)
+	CmOut frontend.Variable    `gnark:",public"` // cmᵢ^(out)
+	PkT   sw_bls12377.G1Affine `gnark:",public"` // pkₜ
+	// CipherAux correspond au ciphertext (bᵢ, skᵢ^(in), pkᵢ^(out)) chiffré sous pkₜ
+	// Selon votre schéma, ça peut être 4, 5, 6 field elements, etc.
+	// Ici on suppose 5 elements par ex.
+	CipherAux [3]frontend.Variable `gnark:",public"`
+
+	// ----- Variables PRIVEES (witness) -----
+	SkIn frontend.Variable // skᵢ^(in)
+	B    frontend.Variable // bᵢ
+	//REnc frontend.Variable // rEnc (aléa d’encryption)
+
+	// Note consommée (in)
+	NIn struct {
+		Coins  frontend.Variable // ou int64 si vous avez un seul champ
+		Energy frontend.Variable // si vous gérez 2 goods
+		PkIn   frontend.Variable
+		RhoIn  frontend.Variable
+		RIn    frontend.Variable
+		CmIn   frontend.Variable
+	}
+
+	// Note de sortie (out)
+	NOut struct {
+		Coins  frontend.Variable
+		Energy frontend.Variable
+		PkOut  frontend.Variable
+		RhoOut frontend.Variable
+		ROut   frontend.Variable
+		CmOut  frontend.Variable
+	}
+}
+
+// Define impose les contraintes ZK pour le Withdraw.
+func (c *CircuitWithdraw) Define(api frontend.API) error {
+
+	// (1) Vérifier snIn = PRF(skIn, rhoIn)
+	//     => On recalcule snIn via votre PRF
+	snComputed := PRF(api, c.SkIn, c.NIn.RhoIn)
+	api.AssertIsEqual(c.SnIn, snComputed)
+
+	// (2) Vérifier cmOut = Com(Γout, pkOut, rhoOut, rOut)
+	//     => On recalcule le commit via MiMC ou autre
+	hasher, _ := mimc.NewMiMC(api)
+	hasher.Write(c.NOut.Coins)
+	hasher.Write(c.NOut.Energy)
+	//hasher.Write(c.NOut.PkOut)
+	hasher.Write(c.NOut.RhoOut)
+	// rOut peut être un champ de "commitment random"
+	// ou alors vous l’incluez différemment selon votre scheme
+	hasher.Write(c.NOut.ROut)
+	cmComputed := hasher.Sum()
+	api.AssertIsEqual(c.CmOut, cmComputed)
+	// On s’assure aussi que la note de sortie a un cmOut cohérent :
+	//api.AssertIsEqual(c.NOut.CmOut, cmComputed)
+
+	// (3) Vérifier que CipherAux = Enc(pkT, (b, skIn, pkOut)) avec rEnc
+	//     => On refait la logique "encryption" en circuit
+	//        puis on compare
+	encVal := EncWithdrawMimc(api, c.NOut.PkOut, c.SkIn, c.B, c.PkT)
+	// Compare chaque champ
+	for i := 0; i < 3; i++ {
+		api.AssertIsEqual(c.CipherAux[i], encVal[i])
+	}
+	return nil
+}
+
+// func EncZKWithdraw(api frontend.API,
+// 	b, skIn, pkOut frontend.Variable,
+// 	pkT sw_bls12377.G1Affine,
+// ) [5]frontend.Variable {
+
+// 	// EXEMPLE : on concatène pkT.X, pkT.Y, rEnc,
+// 	//           on fait un hashing en plusieurs étapes,
+// 	//           et on l’utilise comme masque.
+// 	// Adaptez selon votre schéma d’encryption.
+// 	h, _ := mimc.NewMiMC(api)
+// 	// on “mixe” la clé publique pkT et rEnc
+// 	h.Write(pkT.X)
+// 	h.Write(pkT.Y)
+// 	//h.Write(rEnc)
+// 	mask1 := h.Sum()
+// 	h.Write(mask1)
+// 	mask2 := h.Sum()
+// 	h.Write(mask2)
+// 	mask3 := h.Sum()
+// 	h.Write(mask3)
+// 	mask4 := h.Sum()
+// 	h.Write(mask4)
+// 	mask5 := h.Sum()
+
+// 	// “Chiffrement” = x + mask
+// 	cB := api.Add(b, mask1)
+// 	cSkIn := api.Add(skIn, mask2)
+// 	cPkOut := api.Add(pkOut, mask3)
+
+// 	// Vous pouvez rajouter 2 champs pour la démo, ex : “dummy1” + “dummy2”
+// 	dummy1 := mask4
+// 	dummy2 := mask5
+
+// 	return [5]frontend.Variable{cB, cSkIn, cPkOut, dummy1, dummy2}
+// }
+
+// BuildEncWithdrawMimc réalise (hors-circuit) le "chiffrement" de 3 valeurs
+// (b, skIn, pkOut) avec la clé publique EncKey et l'aléa rEnc, suivant
+// la même stratégie que BuildEncRegMimc (répétitions h.Write(...) + h.Sum(...)).
+// func BuildEncWithdrawMimc_(
+// 	EncKey bls12377.G1Affine,
+// 	b, skIn, pkOut []byte,
+// ) [3]bls12377_fp.Element {
+
+// 	// 1) on crée un hasher MiMC sur BW6-761
+// 	h := mimc_bw6_761.NewMiMC()
+
+// 	// 2) on convertit EncKey.X, EncKey.Y en []byte
+// 	encKeyX := EncKey.X.Bytes()
+// 	encKeyY := EncKey.Y.Bytes()
+
+// 	// 3) On "mixe" pkEncKeyX, pkEncKeyY et rEnc
+// 	h.Write(encKeyX[:])
+// 	h.Write(encKeyY[:])
+// 	//h.Write(rEnc)
+
+// 	// 4) On calcule 3 valeurs de hash successives (hEnc1, hEnc2, hEnc3)
+// 	var hEnc1, hEnc2, hEnc3 []byte
+
+// 	// hEnc1 = h.Sum()
+// 	hEnc1 = h.Sum(nil)
+
+// 	// hEnc2 = H( hEnc1 )
+// 	h.Write(hEnc1)
+// 	hEnc2 = h.Sum(nil)
+
+// 	// hEnc3 = H( hEnc2 )
+// 	h.Write(hEnc2)
+// 	hEnc3 = h.Sum(nil)
+
+// 	// 5) on convertit b, skIn, pkOut en big.Int puis en fp.Element
+// 	bInt := new(big.Int).SetBytes(b)
+// 	skInInt := new(big.Int).SetBytes(skIn)
+// 	pkOutInt := new(big.Int).SetBytes(pkOut)
+
+// 	var bEl, skInEl, pkOutEl bls12377_fp.Element
+// 	bEl.SetBigInt(bInt)
+// 	skInEl.SetBigInt(skInInt)
+// 	pkOutEl.SetBigInt(pkOutInt)
+
+// 	// 6) on convertit hEnc1, hEnc2, hEnc3 en fp.Element
+// 	var m1, m2, m3 bls12377_fp.Element
+// 	m1.SetBigInt(new(big.Int).SetBytes(hEnc1))
+// 	m2.SetBigInt(new(big.Int).SetBytes(hEnc2))
+// 	m3.SetBigInt(new(big.Int).SetBytes(hEnc3))
+
+// 	// 7) chiffrement additif = clair + masque
+// 	bEnc := new(bls12377_fp.Element).Add(&bEl, &m1)
+// 	skInEnc := new(bls12377_fp.Element).Add(&skInEl, &m2)
+// 	pkOutEnc := new(bls12377_fp.Element).Add(&pkOutEl, &m3)
+
+// 	// 8) on retourne le tableau [3] d'éléments
+// 	return [3]bls12377_fp.Element{*bEnc, *skInEnc, *pkOutEnc}
+// }
+
+// // Structure d'input pour F multi‑coin (version FN)
+// type InputTxFN struct {
+// 	// Champs coin‑spécifiques (pour chaque coin)
+// 	InCoin   []frontend.Variable
+// 	InEnergy []frontend.Variable
+// 	InCm     []frontend.Variable
+// 	InSn     []frontend.Variable
+// 	InPk     []frontend.Variable
+// 	InSk     []frontend.Variable
+// 	InRho    []frontend.Variable
+// 	InRand   []frontend.Variable
+
+// 	OutCoin   []frontend.Variable
+// 	OutEnergy []frontend.Variable
+// 	OutCm     []frontend.Variable
+// 	OutSn     []frontend.Variable
+// 	OutPk     []frontend.Variable
+// 	OutRho    []frontend.Variable
+// 	OutRand   []frontend.Variable
+
+// 	// Paramètre global commun
+// 	SkT []bls12377.G1Affine
+
+// 	// Éventuellement, d'autres champs coin‑spécifiques (si nécessaire)
+// 	// Par exemple, si vous souhaitez avoir un SnIn et CmOut par coin :
+// 	SnIn  []frontend.Variable
+// 	CmOut []frontend.Variable
+
+// 	// Pour chaque coin, un tableau de 5 éléments (ex. issus de l'encryption)
+// 	C      [][5][]byte
+// 	DecVal [][5][]byte
+
+// 	// Paramètres globaux (communs à tous les coins)
+// 	EncKey []bls12377.G1Affine
+// 	// Si R doit être coin‑spécifique, on pourra en faire une slice, sinon global :
+// 	R   []frontend.Variable
+// 	G   []bls12377.G1Affine
+// 	G_b []bls12377.G1Affine
+// 	G_r []bls12377.G1Affine
+// }
+
+type InputTxDraw struct {
+	SnIn      []byte
+	CmOut     []byte
+	PkT       bls12377.G1Affine
+	CipherAux [3][]byte
+	SkIn      []byte
+	B         []byte
+	REnc      []byte
+	NInCoins  []byte // ou int64 si vous avez un seul champ
+	NInEnergy []byte // si vous gérez 2 goods
+	NInPkIn   []byte
+	NInRhoIn  []byte
+	NInRIn    []byte
+	NInCmIn   []byte
+
+	NOutCoins  []byte
+	NOutEnergy []byte
+	NOutPkOut  []byte
+	NOutRhoOut []byte
+	NOutROut   []byte
+	NOutCmOut  []byte
+}
+
+func (ip *InputTxDraw) BuildWitness() (frontend.Circuit, error) {
+
+	var c CircuitWithdraw // CircuitTxF2 est défini avec des tableaux statiques pour 2 coins.
+
+	c.SnIn = new(big.Int).SetBytes(ip.SnIn)
+	c.CmOut = new(big.Int).SetBytes(ip.CmOut)
+	c.PkT = sw_bls12377.NewG1Affine(ip.PkT)
+	for i := 0; i < 3; i++ {
+		c.CipherAux[i] = new(big.Int).SetBytes(ip.CipherAux[i])
+	}
+	c.SkIn = new(big.Int).SetBytes(ip.SkIn)
+	c.B = new(big.Int).SetBytes(ip.B)
+	//c.REnc = new(big.Int).SetBytes(ip.REnc)
+
+	c.NIn.Coins = new(big.Int).SetBytes(ip.NInCoins)
+	c.NIn.Energy = new(big.Int).SetBytes(ip.NInEnergy)
+	c.NIn.PkIn = new(big.Int).SetBytes(ip.NInPkIn)
+	c.NIn.RhoIn = new(big.Int).SetBytes(ip.NInRhoIn)
+	c.NIn.RIn = new(big.Int).SetBytes(ip.NInRIn)
+	c.NIn.CmIn = new(big.Int).SetBytes(ip.NInCmIn)
+
+	c.NOut.Coins = new(big.Int).SetBytes(ip.NOutCoins)
+	c.NOut.Energy = new(big.Int).SetBytes(ip.NOutEnergy)
+	c.NOut.PkOut = new(big.Int).SetBytes(ip.NOutPkOut)
+	c.NOut.RhoOut = new(big.Int).SetBytes(ip.NOutRhoOut)
+	c.NOut.ROut = new(big.Int).SetBytes(ip.NOutROut)
+	c.NOut.CmOut = new(big.Int).SetBytes(ip.NOutCmOut)
+	return &c, nil
+}
+
+func BuildEncWithdrawMimc(pkOut, skIn, bid []byte, EncKey bls12377.G1Affine) [3]bls12377_fp.Element {
+
+	pk_out := new(big.Int).SetBytes(pkOut[:])
+	sk_in := new(big.Int).SetBytes(skIn[:])
+	bid_ := new(big.Int).SetBytes(bid[:])
+
+	h := mimc_bw6_761.NewMiMC()
+
+	EncKeyX := EncKey.X.Bytes()
+	EncKeyXBytes := make([]byte, len(EncKeyX))
+	copy(EncKeyXBytes[:], EncKeyX[:])
+
+	EncKeyY := EncKey.Y.Bytes()
+	EncKeyYBytes := make([]byte, len(EncKeyY))
+	copy(EncKeyYBytes[:], EncKeyY[:])
+
+	//compute H(enc_key)
+	h.Write(EncKeyXBytes)
+	h.Write(EncKeyYBytes)
+	var h_enc_key []byte
+	h_enc_key = h.Sum(h_enc_key)
+
+	//compute H(H(enc_key))
+	var h_h_enc_key []byte
+	h.Write(h_enc_key)
+	h_h_enc_key = h.Sum(h_h_enc_key)
+
+	//compute H(H(H(enc_key)))
+	var h_h_h_enc_key []byte
+	h.Write(h_h_enc_key)
+	h_h_h_enc_key = h.Sum(h_h_h_enc_key)
+
+	//compute H(H(H(H(enc_key))))
+	var h_h_h_h_enc_key []byte
+	h.Write(h_h_h_enc_key)
+	h_h_h_h_enc_key = h.Sum(h_h_h_h_enc_key)
+
+	//compute H(H(H(H(H(enc_key)))))
+	var h_h_h_h_h_enc_key []byte
+	h.Write(h_h_h_h_enc_key)
+	h_h_h_h_h_enc_key = h.Sum(h_h_h_h_h_enc_key)
+
+	//compute H(H(H(H(H(H(enc_key))))))
+	var h_h_h_h_h_h_enc_key []byte
+	h.Write(h_h_h_h_h_enc_key)
+	h_h_h_h_h_h_enc_key = h.Sum(h_h_h_h_h_h_enc_key)
+
+	//encrypt pk
+	pk_ := new(bls12377_fp.Element).SetBigInt(pk_out)
+	pk_enc := new(bls12377_fp.Element).Add(pk_, new(bls12377_fp.Element).SetBigInt(new(big.Int).SetBytes(h_enc_key[:])))
+
+	//encrypt coins
+	skin := new(bls12377_fp.Element).SetBigInt(sk_in)
+	skin_enc := new(bls12377_fp.Element).Add(skin, new(bls12377_fp.Element).SetBigInt(new(big.Int).SetBytes(h_h_enc_key[:])))
+
+	//encrypt energy
+	bid__ := new(bls12377_fp.Element).SetBigInt(bid_)
+	bid_enc := new(bls12377_fp.Element).Add(bid__, new(bls12377_fp.Element).SetBigInt(new(big.Int).SetBytes(h_h_h_enc_key[:])))
+
+	// //encrypt rho
+	// rho_ := new(bls12377_fp.Element).SetBigInt(rho)
+	// rho_enc := new(bls12377_fp.Element).Add(rho_, new(bls12377_fp.Element).SetBigInt(new(big.Int).SetBytes(h_h_h_h_enc_key[:])))
+
+	// //encrypt rand
+	// rand_ := new(bls12377_fp.Element).SetBigInt(rand)
+	// rand_enc := new(bls12377_fp.Element).Add(rand_, new(bls12377_fp.Element).SetBigInt(new(big.Int).SetBytes(h_h_h_h_h_enc_key[:])))
+
+	// //encrypt cm
+	// cm_ := new(bls12377_fp.Element).SetBigInt(new(big.Int).SetBytes(cm[:]))
+	// cm_enc := new(bls12377_fp.Element).Add(cm_, new(bls12377_fp.Element).SetBigInt(new(big.Int).SetBytes(h_h_h_h_h_h_enc_key[:])))
+
+	return [3]bls12377_fp.Element{*pk_enc, *skin_enc, *bid_enc} //, *rho_enc, *rand_enc, *cm_enc}
+}
+
+func EncWithdrawMimc(api frontend.API, pkOut, skIn, bid frontend.Variable, enc_key sw_bls12377.G1Affine) []frontend.Variable {
+	h, _ := mimc.NewMiMC(api)
+
+	//compute H(enc_key)
+	h.Write(enc_key.X)
+	h.Write(enc_key.Y)
+	h_enc_key := h.Sum()
+
+	//compute H(H(enc_key))
+	h.Write(h.Sum())
+	h_h_enc_key := h.Sum()
+
+	//compute H(H(H(enc_key)))
+	h.Write(h_h_enc_key)
+	h_h_h_enc_key := h.Sum()
+
+	// //compute H(H(H(H(enc_key))))
+	// h.Write(h_h_h_enc_key)
+	// h_h_h_h_enc_key := h.Sum()
+
+	// //compute H(H(H(H(H(enc_key)))))
+	// h.Write(h_h_h_h_enc_key)
+	// h_h_h_h_h_enc_key := h.Sum()
+
+	// //compute H(H(H(H(H(H(enc_key))))))
+	// h.Write(h_h_h_h_h_enc_key)
+	// h_h_h_h_h_h_enc_key := h.Sum()
+
+	//encrypt pkOut
+	pk_enc := api.Add(pkOut, h_enc_key)
+
+	//encrypt skIn
+	sk_enc := api.Add(skIn, h_h_enc_key)
+
+	//encrypt bid
+	bid_enc := api.Add(bid, h_h_h_enc_key)
+
+	// //encrypt gammaIn
+	// gamma_enc := api.Add(gammaInCoins, h_h_h_h_enc_key)
+
+	// //encrypt energy
+	// energy_enc := api.Add(gammaInEnergy, h_h_h_h_h_enc_key)
+
+	//return encrypted values
+	return []frontend.Variable{pk_enc, sk_enc, bid_enc} //, gamma_enc, energy_enc}
+}
+
+/////////////
+
+// type CircuitTxDraw struct {
+// 	// old note data (PUBLIC)
+// 	OldCoin   frontend.Variable `gnark:",public"`
+// 	OldEnergy frontend.Variable `gnark:",public"`
+// 	CmOld     frontend.Variable `gnark:",public"`
+// 	SnOld     frontend.Variable `gnark:",public"` // PRF_{sk}(rho)
+// 	PkOld     frontend.Variable `gnark:",public"`
+
+// 	// new note data (PUBLIC)
+// 	NewCoin   frontend.Variable    `gnark:",public"`
+// 	NewEnergy frontend.Variable    `gnark:",public"`
+// 	CmNew     frontend.Variable    `gnark:",public"`
+// 	CNew      [6]frontend.Variable `gnark:",public"` // "cipher" simulé
+
+// 	// old note data (PRIVATE)
+// 	SkOld   frontend.Variable
+// 	RhoOld  frontend.Variable
+// 	RandOld frontend.Variable
+
+// 	// new note data (PRIVATE)
+// 	PkNew   frontend.Variable
+// 	RhoNew  frontend.Variable
+// 	RandNew frontend.Variable
+
+// 	////
+
+// 	R frontend.Variable
+// 	//B      frontend.Variable
+// 	G      sw_bls12377.G1Affine `gnark:",public"`
+// 	G_b    sw_bls12377.G1Affine `gnark:",public"`
+// 	G_r    sw_bls12377.G1Affine `gnark:",public"`
+// 	EncKey sw_bls12377.G1Affine
+
+// 	////
+// }
+
+// func (c *CircuitTxDraw) Define(api frontend.API) error {
+// 	// 1) Recalcule cmOld[i]
+// 	hasher, _ := mimc.NewMiMC(api)
+// 	hasher.Reset()
+// 	hasher.Write(c.OldCoin)
+// 	hasher.Write(c.OldEnergy)
+// 	hasher.Write(c.RhoOld)
+// 	hasher.Write(c.RandOld)
+// 	cm := hasher.Sum()
+// 	api.AssertIsEqual(c.CmOld, cm)
+// 	// 2) Recalcule snOld[i] = MiMC(sk, rho) (façon PRF)
+// 	snComputed := PRF(api, c.SkOld, c.RhoOld)
+// 	api.AssertIsEqual(c.SnOld, snComputed)
+// 	// 3) Recalcule cmNew[j]
+// 	hasher.Reset()
+// 	hasher.Write(c.NewCoin)
+// 	hasher.Write(c.NewEnergy)
+// 	hasher.Write(c.RhoNew)
+// 	hasher.Write(c.RandNew)
+// 	cm = hasher.Sum()
+// 	api.AssertIsEqual(c.CmNew, cm)
+// 	// 4) Recalcule cNew[j] = MiMC(pk, coins, energy, rho, rand, cm)
+// 	encVal := EncZK(api, c.PkNew,
+// 		c.NewCoin, c.NewEnergy,
+// 		c.RhoNew, c.RandNew, c.CmNew, c.EncKey)
+// 	api.AssertIsEqual(c.CNew[0], encVal[0])
+// 	api.AssertIsEqual(c.CNew[1], encVal[1])
+// 	api.AssertIsEqual(c.CNew[2], encVal[2])
+// 	api.AssertIsEqual(c.CNew[3], encVal[3])
+// 	api.AssertIsEqual(c.CNew[4], encVal[4])
+// 	api.AssertIsEqual(c.CNew[5], encVal[5])
+// 	// 5) Vérifie conservation
+// 	oldCoinsSum := api.Add(c.OldCoin, c.OldCoin)
+// 	newCoinsSum := api.Add(c.NewCoin, c.NewCoin)
+// 	api.AssertIsEqual(oldCoinsSum, newCoinsSum)
+
+// 	oldEnergySum := api.Add(c.OldEnergy, c.OldEnergy)
+// 	newEnergySum := api.Add(c.NewEnergy, c.NewEnergy)
+// 	api.AssertIsEqual(oldEnergySum, newEnergySum)
+
+// 	// EXTRA: Encryption check
+
+// 	//(G^r)^b == EncKey
+// 	G_r_b := new(sw_bls12377.G1Affine)
+// 	G_r_b.ScalarMul(api, c.G_b, c.R)
+// 	api.AssertIsEqual(c.EncKey.X, G_r_b.X)
+// 	api.AssertIsEqual(c.EncKey.Y, G_r_b.Y)
+
+// 	//(G^r) == G_r
+// 	G_r := new(sw_bls12377.G1Affine)
+// 	G_r.ScalarMul(api, c.G, c.R)
+// 	api.AssertIsEqual(c.G_r.X, G_r.X)
+// 	api.AssertIsEqual(c.G_r.Y, G_r.Y)
+
+// 	//check a_pk = MiMC(a_sk)
+// 	hasher.Reset()
+// 	hasher.Write(c.SkOld)
+// 	pk := hasher.Sum()
+// 	api.AssertIsEqual(c.PkOld, pk)
+// 	return nil
+// }

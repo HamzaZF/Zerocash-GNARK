@@ -76,10 +76,45 @@ type Node struct {
 	//TxHandler      *TransactionHandler   // Dedicated handler for transactions
 	TxHandler TxHandlerInterface
 	//TxDefaultOneCoinHandler *TransactionDefaultOneCoinHandler
-	DHRequestHandler *DHRequestHandler
-	RegisterHandler  *RegisterHandler
-	AuctionHandler   *AuctionHandler
+	DHRequestHandler  *DHRequestHandler
+	RegisterHandler   *RegisterHandler
+	AuctionHandler    *AuctionHandler
+	TxDrawCoinHandler *TxDrawCoinHandler
 }
+
+// Draw simule un retrait (withdraw) pour ce noeud (non-validateur).
+// Il crée un ticket de retrait, génère une preuve et envoie le ticket au validateur.
+
+/*
+func (n *Node) SendTransactionRegisterN(
+	validatorAddress string,
+	targetAddress string,
+	targetID int,
+	// Paramètres existants pour les preuves et circuits
+	globalCCSOneCoin constraint.ConstraintSystem,
+	globalPKOneCoin groth16.ProvingKey,
+	globalVKOneCoin groth16.VerifyingKey,
+	globalCCSRegister constraint.ConstraintSystem,
+	globalPKRegister groth16.ProvingKey,
+	globalVKRegister groth16.VerifyingKey,
+	// Paramètres supplémentaires nécessaires pour construire l'input de la transaction
+	nBase zg.Note, // pour OldNote
+	skBase []byte, // pour OldSk
+	//new1 zg.Gamma, // pour NewVal
+	pkIn []byte, // pour NewPk (et utilisé dans l'input de register)
+	gammaIn zg.Gamma, // pour le paramètre gamma dans BuildEncRegMimc et InVal
+	pkOut []byte, // pour le paramètre pkOut de BuildEncRegMimc et PkOut dans l'input de register
+	skIn []byte, // pour skIn (dans BuildEncRegMimc et inp_reg)
+	bid *big.Int, // pour bid (et son utilisation en bid.Bytes())
+	nIn zg.Note, // pour accéder à nIn.Cm (votre type doit contenir le champ Cm)
+	// Paramètres pour la transaction one coin
+
+	// Autres paramètres
+	kind bool,
+) error {
+*/
+
+// (validatorAddress string, TxListTemp []zn.Transaction, AuxList []zn.AuxList, nInList []zg.Note, targetIdList []int, targetAddresses []string
 
 type TxHandlerInterface interface {
 	HandleMessage(msg zn.Message, conn net.Conn)
@@ -102,6 +137,7 @@ func NewNode(port int, id int, commonG bls12377.G1Affine, isValidator bool) *Nod
 	node.DHRequestHandler = NewDHRequestHandler(node)
 	node.RegisterHandler = NewRegisterHandler(node)
 	node.AuctionHandler = NewAuctionHandler(node)
+	node.TxDrawCoinHandler = NewTxDrawCoinHandler(node)
 	//node.TxHandler = NewTransactionHandler(node)
 	if isValidator {
 		node.TxHandler = NewTransactionValidatorHandler(node)
@@ -163,6 +199,8 @@ func (n *Node) handleConnection(conn net.Conn) {
 			n.RegisterHandler.HandleMessage(msg, conn)
 		case "auction":
 			n.AuctionHandler.HandleMessage(msg, conn)
+		case "tx_draw_one_coin":
+			n.TxDrawCoinHandler.HandleMessage(msg, conn)
 		default:
 			zn.RouteMessage(msg, conn)
 		}
@@ -1083,6 +1121,7 @@ func TransactionOneCoin(inp zg.TxProverInputHighLevelDefaultOneCoin, globalCCSOn
 		TargetID:      targetID,
 		PublicWitness: pubBuf.Bytes(),
 		EncVal:        encVal,
+		Inp:           ip,
 	}
 }
 
@@ -2366,6 +2405,45 @@ func (tvh *TransactionValidatorHandler) HandleMessage(msg zn.Message, conn net.C
 		}*/
 }
 
+type TxDrawCoinHandler struct {
+	Node *Node
+}
+
+func NewTxDrawCoinHandler(node *Node) *TxDrawCoinHandler {
+	return &TxDrawCoinHandler{Node: node}
+}
+
+func (drh *TxDrawCoinHandler) HandleMessage(msg zn.Message, conn net.Conn) {
+	//logger := zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr}).With().Timestamp().Logger()
+	// Example implementation:
+	// Extract the payload of type DHRequestPayload (which you must define)
+	req, ok := msg.Payload.(zn.TxEncapsulated)
+	if !ok {
+		fmt.Println("AuctionHandler: invalid payload")
+		return
+	}
+	//logger.Info().Msg(fmt.Sprintf("%s[Node %d] [Auction] Received an auction result from sender %d\033[0m", getNodeColor(drh.Node.ID), drh.Node.ID, req.SenderID))
+
+	// Construction du witness
+	Inp := req.Payload.(zn.TxDefaultOneCoinPayload).Inp
+	wc, _ := Inp.BuildWitness()
+	w, _ := frontend.NewWitness(wc, ecc.BW6_761.ScalarField(), frontend.PublicOnly())
+
+	wPub, _ := w.Public()
+	var pubBuf bytes.Buffer
+	if _, err := wPub.WriteTo(&pubBuf); err != nil {
+		panic(err)
+	}
+
+	buf := bytes.NewReader(req.Payload.(zn.TxDefaultOneCoinPayload).TxResult.Proof)
+	p := groth16.NewProof(ecc.BW6_761)
+	_, err := p.ReadFrom(buf)
+	if err != nil {
+		fmt.Println("invalid proof =>", err)
+	}
+
+}
+
 // -------------------------------
 // AuctionHandler
 // -------------------------------
@@ -3120,9 +3198,9 @@ func (rh *RegisterHandler) HandleMessage(msg zn.Message, conn net.Conn) {
 	//    These must match EXACTLY how you built them in SendTransactionRegister.
 	cmIn := /* e.g. */ txReg.CmIn     // if you stored nIn.Cm in txReg
 	coinsIn := txOneCoin.NewVal.Coins //big.NewInt(12)                        // if you used 12 in your TxProverInputHighLevelRegister
-	fmt.Println("txOneCoin.NewVal.Coins =", txOneCoin.NewVal.Coins)
+	//fmt.Println("txOneCoin.NewVal.Coins =", txOneCoin.NewVal.Coins)
 	energyIn := txOneCoin.NewVal.Energy //big.NewInt(5)                        // if you used 5
-	fmt.Println("txOneCoin.NewVal.Energy =", txOneCoin.NewVal.Energy)
+	//fmt.Println("txOneCoin.NewVal.Energy =", txOneCoin.NewVal.Energy)
 	bid := new(big.Int).SetBytes(txReg.AuxCipher[2]) // if the 3rd slot is the plain bid
 
 	/*
@@ -3329,6 +3407,10 @@ var globalVKF2 groth16.VerifyingKey
 var globalCCSF3 constraint.ConstraintSystem
 var globalPKF3 groth16.ProvingKey
 var globalVKF3 groth16.VerifyingKey
+
+var globalCCSDraw constraint.ConstraintSystem
+var globalPKDraw groth16.ProvingKey
+var globalVKDraw groth16.VerifyingKey
 
 var CmList [][]byte
 var SnList [][]byte
@@ -3648,15 +3730,7 @@ func main() {
 	globalCCSF1, globalPKF1, globalVKF1 = zg.LoadOrGenerateKeys("f2")
 	globalCCSF2, globalPKF2, globalVKF2 = zg.LoadOrGenerateKeys("f2")
 	globalCCSF3, globalPKF3, globalVKF3 = zg.LoadOrGenerateKeys("f3")
-
-	///////////// Diffie–Hellman key exchange //////////////
-	// nodes[1].DiffieHellmanKeyExchange(nodes[2].Address)
-	// nodes[2].DiffieHellmanKeyExchange(nodes[3].Address)
-	// nodes[3].DiffieHellmanKeyExchange(nodes[4].Address)
-	// nodes[4].DiffieHellmanKeyExchange(nodes[1].Address)
-	// nodes[1].DiffieHellmanKeyExchange(nodes[3].Address)
-
-	//DiffieHellmanInit(nodes)
+	globalCCSDraw, globalPKDraw, globalVKDraw = zg.LoadOrGenerateKeys("draw")
 
 	n := len(nodes)
 	for i := 0; i < n; i++ {
@@ -3667,11 +3741,6 @@ func main() {
 		nodes[i].DiffieHellmanKeyExchange(nodes[0].Address)
 	}
 
-	// nodes[1].DiffieHellmanKeyExchange(nodes[0].Address)
-	// nodes[2].DiffieHellmanKeyExchange(nodes[0].Address)
-	// nodes[3].DiffieHellmanKeyExchange(nodes[0].Address)
-	// nodes[4].DiffieHellmanKeyExchange(nodes[0].Address)
-
 	max := 4
 	//time.Sleep(1 * time.Second)
 	for {
@@ -3680,134 +3749,481 @@ func main() {
 		}
 	}
 
-	fmt.Println("secret_key 1 -> 2: ", nodes[1].DHExchanges[2].SharedSecret)
-	fmt.Println("ephemeral_public_key 1 -> 2: ", nodes[1].DHExchanges[2].EphemeralPublic)
-	fmt.Println("partner_public_key 1 -> 2: ", nodes[1].DHExchanges[2].PartnerPublic)
+	// node1Notes := createNodeNotes(13, 2, 13, 2, 13)
+	// node2Notes := createNodeNotes(15, 1, 15, 1, 15)
+	// node3Notes := createNodeNotes(15, 1, 15, 1, 15)
 
-	fmt.Println("secret_key 2 -> 1: ", nodes[2].DHExchanges[1].SharedSecret)
-	fmt.Println("ephemeral_public_key 2 -> 1: ", nodes[2].DHExchanges[1].EphemeralPublic)
-	fmt.Println("partner_public_key 2 -> 1: ", nodes[2].DHExchanges[1].PartnerPublic)
+	// ////
 
-	//return
+	// nInList := []zg.Note{node1Notes.NIn, node2Notes.NIn, node3Notes.NIn}
+	// targetIdList := []int{nodes[1].ID, nodes[2].ID, nodes[3].ID}
+	// targetAddresses := []string{nodes[1].Address, nodes[2].Address, nodes[3].Address}
 
-	//fmt.Println()
-	//nodes[1].SendTransactionDummyImproved(nodes[0].Address, nodes[2].Address, nodes[2].ID, globalCCS, globalPK, globalVK)
+	// /////////////////
+	// ///////Send register transactions
+	// /////////////////
 
-	//fmt.Println("CmList: ", CmList)
+	// nodes[1].SendTransactionRegisterN(
+	// 	nodes[0].Address, nodes[4].Address, nodes[4].ID,
+	// 	globalCCSOneCoin, globalPKOneCoin, globalVKOneCoin,
+	// 	globalCCSRegister, globalPKRegister, globalVKRegister,
+	// 	node1Notes.NBase, node1Notes.SkBase, node1Notes.PkIn, node1Notes.NIn.Value,
+	// 	node1Notes.PkOut, node1Notes.SkIn, node1Notes.Bid, node1Notes.NIn, true)
 
-	/////////////////
-	///////Notes of nodes[1] (nBase, nIn, nOut)
-	/////////////////
+	// nodes[2].SendTransactionRegisterN(
+	// 	nodes[0].Address, nodes[4].Address, nodes[4].ID,
+	// 	globalCCSOneCoin, globalPKOneCoin, globalVKOneCoin,
+	// 	globalCCSRegister, globalPKRegister, globalVKRegister,
+	// 	node2Notes.NBase, node2Notes.SkBase, node2Notes.PkIn, node2Notes.NIn.Value,
+	// 	node2Notes.PkOut, node2Notes.SkIn, node2Notes.Bid, node2Notes.NIn, true)
 
-	sk_base_1 := GenerateSk()
-	pkBase_1 := GeneratePk(sk_base_1)
-	rho_base_1 := big.NewInt(1111).Bytes()
-	rand_base_1 := big.NewInt(2222).Bytes()
-	value_base_1 := zg.NewGamma(13, 2)
-	nBase_1 := GenerateNote(value_base_1, pkBase_1, rho_base_1, rand_base_1)
+	// nodes[3].SendTransactionRegisterN(
+	// 	nodes[0].Address, nodes[4].Address, nodes[4].ID,
+	// 	globalCCSOneCoin, globalPKOneCoin, globalVKOneCoin,
+	// 	globalCCSRegister, globalPKRegister, globalVKRegister,
+	// 	node3Notes.NBase, node3Notes.SkBase, node3Notes.PkIn, node3Notes.NIn.Value,
+	// 	node3Notes.PkOut, node3Notes.SkIn, node3Notes.Bid, node3Notes.NIn, true)
 
-	sk_in_1 := GenerateSk()
-	pkIn_1 := GeneratePk(sk_in_1)
-	rho_in_1 := big.NewInt(1111).Bytes()
-	rand_in_1 := big.NewInt(2222).Bytes()
-	gammaIn_1 := zg.NewGamma(13, 2)
-	nIn_1 := GenerateNote(gammaIn_1, pkIn_1, rho_in_1, rand_in_1)
-	fmt.Println("ici:", nIn_1)
+	// Supposons que K est le nombre de nœuds pour lesquels vous voulez envoyer une transaction register.
+	K := 3
 
-	//new1 := zg.NewGamma(12, 5)
-	sk_out_1 := GenerateSk()
-	pkOut_1 := GeneratePk(sk_out_1)
-	bid_1 := big.NewInt(13) //bid energy
+	// Génération d'une slice de NodeNotes pour K nœuds.
+	// Ici, on choisit des paramètres d'exemple, mais vous pouvez adapter ou stocker ces paramètres dans une slice.
+	nodeNotesList := make([]NodeNotes, K)
+	for i := 0; i < K; i++ {
+		// Vous pouvez par exemple varier les paramètres selon i, ici on prend des valeurs fixes pour l'exemple.
+		// Par exemple, si vous voulez que le premier envoi utilise (13,2,13,2,13) et les suivants (15,1,15,1,15),
+		// vous pouvez faire un test sur i.
+		nodeNotesList[i] = createNodeNotes(15, 1, 15, 1, 15)
+	}
 
-	fmt.Println("sk_in_1:", sk_in_1)
-	fmt.Println("pkOut_1:", pkOut_1)
+	// Si vous avez besoin d'une slice de nIn (par exemple pour une phase d'enchères ultérieure)
+	nInList := make([]zg.Note, K)
+	targetIdList := make([]int, K)
+	targetAddresses := make([]string, K)
+	for i := 0; i < K; i++ {
+		// On suppose que les nœuds concernés se trouvent dans nodes[1] à nodes[K]
+		nInList[i] = nodeNotesList[i].NIn
+		targetIdList[i] = nodes[i+1].ID
+		targetAddresses[i] = nodes[i+1].Address
+	}
 
-	/////////////////
-	///////Notes of nodes[2] (nBase, nIn, nOut)
-	/////////////////
-
-	sk_base_2 := GenerateSk()
-	pkBase_2 := GeneratePk(sk_base_2)
-	rho_base_2 := big.NewInt(1111).Bytes()
-	rand_base_2 := big.NewInt(2222).Bytes()
-	value_base_2 := zg.NewGamma(15, 1)
-	nBase_2 := GenerateNote(value_base_2, pkBase_2, rho_base_2, rand_base_2)
-
-	sk_in_2 := GenerateSk()
-	pkIn_2 := GeneratePk(sk_in_2)
-	rho_in_2 := big.NewInt(1111).Bytes()
-	rand_in_2 := big.NewInt(2222).Bytes()
-	gammaIn_2 := zg.NewGamma(15, 1)
-	nIn_2 := GenerateNote(gammaIn_2, pkIn_2, rho_in_2, rand_in_2)
-
-	//new1 := zg.NewGamma(12, 5)
-	sk_out_2 := GenerateSk()
-	pkOut_2 := GeneratePk(sk_out_2)
-	bid_2 := big.NewInt(15) //bid energy
-
-	// nInList := []zg.Note{nIn_1, nIn_2}
-	// targetIdList := []int{nodes[1].ID, nodes[2].ID}
-	// targetAddresses := []string{nodes[1].Address, nodes[2].Address}
-
-	/////////////////
-	///////Notes of nodes[3] (nBase, nIn, nOut)
-	/////////////////
-
-	sk_base_3 := GenerateSk()
-	pkBase_3 := GeneratePk(sk_base_3)
-	rho_base_3 := big.NewInt(1111).Bytes()
-	rand_base_3 := big.NewInt(2222).Bytes()
-	value_base_3 := zg.NewGamma(15, 1)
-	nBase_3 := GenerateNote(value_base_3, pkBase_3, rho_base_3, rand_base_3)
-
-	sk_in_3 := GenerateSk()
-	pkIn_3 := GeneratePk(sk_in_3)
-	rho_in_3 := big.NewInt(1111).Bytes()
-	rand_in_3 := big.NewInt(2222).Bytes()
-	gammaIn_3 := zg.NewGamma(15, 1)
-	nIn_3 := GenerateNote(gammaIn_3, pkIn_3, rho_in_3, rand_in_3)
-
-	//new1 := zg.NewGamma(12, 5)
-	sk_out_3 := GenerateSk()
-	pkOut_3 := GeneratePk(sk_out_3)
-	bid_3 := big.NewInt(15) //bid energy
-
-	nInList := []zg.Note{nIn_1, nIn_2, nIn_3}
-	targetIdList := []int{nodes[1].ID, nodes[2].ID, nodes[3].ID}
-	targetAddresses := []string{nodes[1].Address, nodes[2].Address, nodes[3].Address}
-
-	/////////////////
-	///////Send register transactions
-	/////////////////
-
-	nodes[1].SendTransactionRegisterN(nodes[0].Address, nodes[4].Address, nodes[4].ID, globalCCSOneCoin, globalPKOneCoin, globalVKOneCoin, globalCCSRegister, globalPKRegister, globalVKRegister, nBase_1, sk_base_1 /*new1,*/, pkIn_1, gammaIn_1, pkOut_1, sk_in_1, bid_1, nIn_1, true)
-	nodes[2].SendTransactionRegisterN(nodes[0].Address, nodes[4].Address, nodes[4].ID, globalCCSOneCoin, globalPKOneCoin, globalVKOneCoin, globalCCSRegister, globalPKRegister, globalVKRegister, nBase_2, sk_base_2 /*new1,*/, pkIn_2, gammaIn_2, pkOut_2, sk_in_2, bid_2, nIn_2, true)
-	nodes[3].SendTransactionRegisterN(nodes[0].Address, nodes[4].Address, nodes[4].ID, globalCCSOneCoin, globalPKOneCoin, globalVKOneCoin, globalCCSRegister, globalPKRegister, globalVKRegister, nBase_3, sk_base_3 /*new1,*/, pkIn_3, gammaIn_3, pkOut_3, sk_in_3, bid_3, nIn_3, true)
+	// Maintenant, pour envoyer les transactions d'enregistrement, on boucle sur ces K notes.
+	// On utilise par exemple nodes[1] à nodes[K] pour envoyer les transactions.
+	for i, nn := range nodeNotesList {
+		err := nodes[i+1].SendTransactionRegisterN(
+			nodes[0].Address, // adresse du validateur (par exemple)
+			nodes[4].Address, // adresse de la cible (peut-être le ledger)
+			nodes[4].ID,      // ID de la cible
+			globalCCSOneCoin, globalPKOneCoin, globalVKOneCoin,
+			globalCCSRegister, globalPKRegister, globalVKRegister,
+			nn.NBase,     // OldNote
+			nn.SkBase,    // OldSk
+			nn.PkIn,      // NewPk (pour l'enregistrement, on peut utiliser la clé publique d'entrée)
+			nn.NIn.Value, // la valeur (gamma) de la note d'entrée
+			nn.PkOut,     // PkOut
+			nn.SkIn,      // skIn
+			nn.Bid,       // Bid
+			nn.NIn,       // nIn (pour récupérer, par exemple, le Cm déjà calculé)
+			true,         // kind (si c'est un one-coin transaction)
+		)
+		if err != nil {
+			fmt.Printf("Erreur lors de l'envoi de la transaction pour le nœud %d: %v\n", nodes[i+1].ID, err)
+		}
+	}
 
 	time.Sleep(6 * time.Second)
-
-	// for {
-	// 	if len(TxListTemp) >= 2 {
-	// 		break
-	// 	}
-	// }
-
-	nodes[4].Auction(nodes[0].Address, TxListTemp, AuxList, nInList, targetIdList, targetAddresses)
 
 	/////////////////
 	///////Auction phase
 	/////////////////
 
-	//Auction()
+	nodes[4].Auction(nodes[0].Address, TxListTemp, AuxList, nInList, targetIdList, targetAddresses)
 
-	//nodes[1].SendTransactionRegisterN(nodes[0].Address, nodes[2].Address, nodes[2].ID, globalCCSOneCoin, globalPKOneCoin, globalVKOneCoin, globalCCSRegister, globalPKRegister, globalVKRegister, nBase, sk_base /*new1,*/, pkIn, gammaIn, pkOut, sk_in, bid, nIn, true)
+	/////////////////
+	///////Draw test
+	/////////////////
 
-	// Print all lists
-	//fmt.Println("SnList: ", SnList)
-	//fmt.Println("TxList: ", TxList)
-	//fmt.Println("TxListDefaultOneCoin: ", TxListDefaultOneCoin)
-	//fmt.Println("CmList: ", CmList)
+	// for i := 0; i < K; i++ {
+	// 	nodes[i].Draw()
+	// }
+
+	/*
+		SnIn []byte,
+		CmOut []byte,
+		pkT bls12377.G1Affine,
+		CipherAux [5][]byte,
+		SkIn []byte,
+		B []byte,
+		REnc []byte,
+		NInCoins []byte,
+		NInEnergy []byte,
+		NInPkIn []byte,
+		NInRhoIn []byte,
+		NInRIn []byte,
+		NInCmIn []byte,
+		NOutCoins []byte,
+		NOutEnergy []byte,
+		NOutPkOut []byte,
+		NOutRhoOut []byte,
+		NOutROut []byte,
+		NOutCmOut []byte
+	*/
+
+	// //Nin := nodeNotesList[0].NBase
+	// //Nout := nodeNotesList[0].NIn
+	// SkIn := nodeNotesList[0].SkIn
+	// B := nodeNotesList[0].Bid.Bytes()
+	// // REnc := nodeNotesList[0].NIn.Rand //NOOOOOOOOOOO
+	// NInCoins := nodeNotesList[0].NIn.Value.Coins.Bytes()
+	// NInEnergy := nodeNotesList[0].NIn.Value.Energy.Bytes()
+	// NInPkIn := nodeNotesList[0].PkIn
+	// NInRhoIn := nodeNotesList[0].NIn.Rho
+	// NInRIn := nodeNotesList[0].NIn.Rand
+	// NInCmIn := nodeNotesList[0].NIn.Cm
+	// NOutCoins := nodeNotesList[0].NIn.Value.Coins.Bytes()
+	// NOutEnergy := nodeNotesList[0].NIn.Value.Energy.Bytes()
+	// NOutPkOut := nodeNotesList[0].PkOut
+	// NOutRhoOut := nodeNotesList[0].NIn.Rho
+	// NOutROut := nodeNotesList[0].NIn.Rand
+	// NOutCmOut := nodeNotesList[0].NIn.Cm
+	// PkT := nodes[0].DHExchanges[nodes[4].ID].SharedSecret
+	// SnIn := zg.CalcSerialMimc(SkIn, NInRhoIn)
+
+	// CipherAux := zg.BuildEncWithdrawMimc(NOutPkOut, SkIn, B, PkT)
+	// var CipherAuxBytes [3][]byte
+
+	// for i := 0; i < 3; i++ {
+	// 	temp := CipherAux[i].Bytes()
+	// 	CipherAuxBytes[i] = temp[:]
+	// }
+
+	// Draw(SnIn, NOutCmOut, PkT, CipherAuxBytes, SkIn, B, NInCoins, NInEnergy, NInPkIn, NInRhoIn, NInRIn, NInCmIn, NOutCoins, NOutEnergy, NOutPkOut, NOutRhoOut, NOutROut, NOutCmOut)
+
+	////
+
+	// Pour chaque note de nodeNotesList, on exécute l'opération de withdraw.
+	for idx := 0; idx < len(nodeNotesList); idx++ {
+		// Récupération des valeurs pour la note d'indice idx
+		SkIn := nodeNotesList[idx].SkIn
+		B := nodeNotesList[idx].Bid.Bytes()
+
+		NInCoins := nodeNotesList[idx].NBase.Value.Coins.Bytes()
+		NInEnergy := nodeNotesList[idx].NBase.Value.Energy.Bytes()
+		NInPkIn := nodeNotesList[idx].PkBase
+		NInRhoIn := nodeNotesList[idx].NBase.Rho
+		NInRIn := nodeNotesList[idx].NBase.Rand
+		NInCmIn := nodeNotesList[idx].NBase.Cm
+
+		NOutCoins := nodeNotesList[idx].NIn.Value.Coins.Bytes() // ici, pour simplifier, on réutilise la même valeur
+		NOutEnergy := nodeNotesList[idx].NIn.Value.Energy.Bytes()
+		NOutPkOut := nodeNotesList[idx].PkIn
+		NOutRhoOut := nodeNotesList[idx].NIn.Rho
+		NOutROut := nodeNotesList[idx].NIn.Rand
+		NOutCmOut := nodeNotesList[idx].NIn.Cm
+
+		// Récupération du secret partagé (PkT)
+		// Ici, on suppose que le validateur est le noeud d'indice 0
+		// et que chaque note possède un identifiant (par exemple, nodeNotesList[idx].ID)
+		// utilisé pour accéder à l'échange Diffie–Hellman.
+		PkT := nodes[idx].DHExchanges[nodes[4].ID].SharedSecret
+
+		// Calcul du serial number snIn hors-circuit
+		SnIn := zg.CalcSerialMimc(SkIn, NInRhoIn)
+
+		// Chiffrement auxiliaire via BuildEncWithdrawMimc.
+		// Ici, on suppose que la fonction BuildEncWithdrawMimc prend en paramètres :
+		// (NOutPkOut, SkIn, B, PkT) et retourne un tableau de 3 éléments.
+		CipherAux := zg.BuildEncWithdrawMimc(NOutPkOut, SkIn, B, PkT)
+		var CipherAuxBytes [3][]byte
+		for j := 0; j < 3; j++ {
+			temp := CipherAux[j].Bytes()
+			CipherAuxBytes[j] = temp[:]
+		}
+
+		// Appel de la fonction Draw avec l'ensemble des paramètres pour cette note.
+		// La fonction Draw (que vous aurez implémentée dans Node) devra accepter ces paramètres.
+
+		// Draw(SnIn, NOutCmOut, PkT, CipherAuxBytes, SkIn, B,
+		// 	NInCoins, NInEnergy, NInPkIn, NInRhoIn, NInRIn, NInCmIn,
+		// 	NOutCoins, NOutEnergy, NOutPkOut, NOutRhoOut, NOutROut, NOutCmOut)
+		nodes[idx].Draw(nodes[0].Address, nodes[4].ID, nodes[4].Address, nodeNotesList[idx].NIn, nodeNotesList[idx].NBase, SnIn, NOutCmOut, PkT, CipherAuxBytes, SkIn, B,
+			NInCoins, NInEnergy, NInPkIn, NInRhoIn, NInRIn, NInCmIn,
+			NOutCoins, NOutEnergy, NOutPkOut, NOutRhoOut, NOutROut, NOutCmOut)
+	}
+
+	////
 
 	mainLogger.Info().Msg("All nodes are operational. Press Ctrl+C to stop.")
 	select {}
+}
+
+/*
+ SnIn      []byte
+    CmOut     []byte
+    pkT       bls12377.G1Affine
+    CipherAux [5][]byte
+    SkIn      []byte
+    B         []byte
+    REnc      []byte
+    NInCoins  []byte // ou int64 si vous avez un seul champ
+    NInEnergy []byte // si vous gérez 2 goods
+    NInPkIn   []byte
+    NInRhoIn  []byte
+    NInRIn    []byte
+    NInCmIn   []byte
+
+    NOutCoins  []byte
+    NOutEnergy []byte
+    NOutPkOut  []byte
+    NOutRhoOut []byte
+    NOutROut   []byte
+    NOutCmOut  []byte
+*/
+
+func (n *Node) Draw(validatorAddress string, targetID int, targetAddress string, nIn zg.Note, nOut zg.Note, SnIn []byte, CmOut []byte, pkT bls12377.G1Affine, CipherAux [3][]byte, SkIn []byte, B []byte, NInCoins []byte, NInEnergy []byte, NInPkIn []byte, NInRhoIn []byte, NInRIn []byte, NInCmIn []byte, NOutCoins []byte, NOutEnergy []byte, NOutPkOut []byte, NOutRhoOut []byte, NOutROut []byte, NOutCmOut []byte) error {
+
+	//Transaction proof
+	logger := zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr}).With().Timestamp().Logger()
+
+	// Établir la connexion TCP
+	conn, err := net.Dial("tcp", validatorAddress)
+	if err != nil {
+		logger.Error().Err(err).Msgf("%s[Node %d] [Transaction] Error dialing %s\033[0m", getNodeColor(n.ID), n.ID, validatorAddress)
+		return err
+	}
+	defer conn.Close()
+
+	//c.PkOut, c.SkIn, c.Bid, c.GammaInCoins, c.GammaInEnergy, c.EncKey)
+
+	NInCoinsInt := new(big.Int).SetBytes(NInCoins)
+	NInEnergyInt := new(big.Int).SetBytes(NInEnergy)
+	gammaIn := zg.Gamma{Coins: NInCoinsInt, Energy: NInEnergyInt}
+	bid := new(big.Int).SetBytes(B)
+
+	// Construction de l'input de la preuve pour une transaction one coin
+	inp := zg.TxProverInputHighLevelDefaultOneCoin{
+		OldNote: nIn,
+		OldSk:   SkIn,
+		NewVal:  gammaIn,
+		NewPk:   NOutPkOut,
+		EncKey:  n.DHExchanges[targetID].SharedSecret,
+		R:       n.DHExchanges[targetID].Secret,
+		// B:      b_bytes[:], // à décommenter et définir si nécessaire
+		G:   n.G,
+		G_b: n.DHExchanges[targetID].PartnerPublic,
+		G_r: n.DHExchanges[targetID].EphemeralPublic,
+	}
+
+	// Appel de la fonction de chiffrement avec les paramètres requis
+	encVal := zg.BuildEncRegMimc(inp.EncKey, gammaIn, NOutPkOut, SkIn, bid)
+
+	//decVal, _ := zg.BuildDecRegMimc(inp.EncKey, encVal)
+
+	// Extraction et copie des différents éléments chiffrés
+	pk_enc := encVal[0].Bytes()
+	pk_enc_bytes := make([]byte, len(pk_enc))
+	copy(pk_enc_bytes, pk_enc[:])
+
+	coins_enc := encVal[3].Bytes()
+	coins_enc_bytes := make([]byte, len(coins_enc))
+	copy(coins_enc_bytes, coins_enc[:])
+
+	energy_enc := encVal[4].Bytes()
+	energy_enc_bytes := make([]byte, len(energy_enc))
+	copy(energy_enc_bytes, energy_enc[:])
+
+	skIn_enc := encVal[1].Bytes()
+	skIn_enc_bytes := make([]byte, len(skIn_enc))
+	copy(skIn_enc_bytes, skIn_enc[:])
+
+	bid_enc := encVal[2].Bytes()
+	bid_enc_bytes := make([]byte, len(bid_enc))
+	copy(bid_enc_bytes, bid_enc[:])
+
+	// Construction de l'input pour la preuve d'enregistrement
+	// inp_reg := zg.TxProverInputHighLevelRegister{
+	// 	InCoin:   gammaIn.Coins.Bytes(),  //big.NewInt(12).Bytes(),
+	// 	InEnergy: gammaIn.Energy.Bytes(), //big.NewInt(5).Bytes(),
+	// 	CmIn:     nIn.Cm,
+	// 	CAux:     [5][]byte{pk_enc_bytes, skIn_enc_bytes, bid_enc_bytes, coins_enc_bytes, energy_enc_bytes},
+	// 	SkIn:     SkIn,
+	// 	PkIn:     NInPkIn,
+	// 	PkOut:    NOutPkOut,
+	// 	Bid:      bid.Bytes(),
+	// 	RhoIn:    big.NewInt(1111).Bytes(),
+	// 	RandIn:   big.NewInt(2222).Bytes(),
+	// 	InVal:    gammaIn,
+	// 	EncKey:   n.DHExchanges[targetID].SharedSecret,
+	// 	R:        n.DHExchanges[targetID].Secret,
+	// 	// B:      b_bytes[:], // à décommenter et définir si nécessaire
+	// 	G:   n.G,
+	// 	G_b: n.DHExchanges[targetID].PartnerPublic,
+	// 	G_r: n.DHExchanges[targetID].EphemeralPublic,
+	// }
+
+	/*
+		cm := zg.Committment(inp.NewVal.Coins, inp.NewVal.Energy,
+			rhoNew, randNew)
+	*/
+
+	rhoNew := zg.RandBigInt()
+	randNew := zg.RandBigInt()
+
+	// Construction de la transaction one coin
+	tx := TransactionOneCoin(inp, globalCCSOneCoin, globalPKOneCoin, conn, n.ID, targetAddress, targetID, rhoNew, randNew)
+
+	//c, _ := tx.Inp.BuildWitness()
+	wc, _ := tx.Inp.BuildWitness()
+	ww, _ := frontend.NewWitness(wc, ecc.BW6_761.ScalarField())
+
+	wPub, _ := ww.Public()
+	var pubBuf bytes.Buffer
+	if _, err := wPub.WriteTo(&pubBuf); err != nil {
+		panic(err)
+	}
+
+	// 4) Generate proof
+	_ = time.Now()
+	proof_, err := groth16.Prove(globalCCSOneCoin, globalPKOneCoin, ww)
+	if err != nil {
+		panic(err)
+	}
+
+	wPub, _ = frontend.NewWitness(wc, ecc.BW6_761.ScalarField(), frontend.PublicOnly())
+
+	//Verify proof
+	// 4) vérification
+	if err := groth16.Verify(proof_, globalVKOneCoin, wPub); err != nil {
+		fmt.Println("Verify =>", err)
+		//return false
+	}
+
+	// Encapsulation de la transaction
+	tx_encapsulated := zn.TxEncapsulated{
+		Kind:    1, // 0 pour default, 1 pour one coin
+		Payload: tx,
+	}
+
+	/////
+
+	//circuitFull, _ := inp.I.BuildWitness()
+
+	// circuitFull := tx.Circuit
+	// proof := tx.TxResult.Proof
+
+	// wPub, err := frontend.NewWitness(circuitFull, ecc.BW6_761.ScalarField(), frontend.PublicOnly())
+	// if err != nil {
+	// 	fmt.Println("NewWitness =>", err)
+	// 	//return false
+	// }
+
+	// // 4) vérification
+	// if err := groth16.Verify(proof, vk, wPub); err != nil {
+	// 	fmt.Println("Verify =>", err)
+	// 	//return false
+	// }
+
+	/////
+
+	// Packager et envoyer le message
+	msg := zn.PackMessage("tx_draw_one_coin", tx_encapsulated)
+	if err := zn.SendMessage(conn, msg); err != nil {
+		fmt.Printf("%s[Node %d] [Transaction] Error sending transaction: %v\033[0m\n", getNodeColor(n.ID), n.ID, err)
+		return nil
+	} else {
+		fmt.Printf("%s[Node %d] [Transaction] Transaction sent successfully for validation\033[0m\n", getNodeColor(n.ID), n.ID)
+	}
+
+	//fmt.Println("transaction done!:", tx)
+
+	//Draw proof
+
+	var InputTxDraw zg.InputTxDraw
+
+	// Remplissage des champs de la transaction
+	InputTxDraw.SnIn = SnIn
+	InputTxDraw.CmOut = CmOut
+	InputTxDraw.PkT = pkT
+
+	for i := 0; i < 3; i++ {
+		InputTxDraw.CipherAux[i] = CipherAux[i]
+	}
+	// InputTxDraw.CipherAux = CipherAux
+	InputTxDraw.SkIn = SkIn
+	InputTxDraw.B = B
+	// InputTxDraw.REnc = REnc
+	InputTxDraw.NInCoins = NInCoins
+	InputTxDraw.NInEnergy = NInEnergy
+	InputTxDraw.NInPkIn = NInPkIn
+	InputTxDraw.NInRhoIn = NInRhoIn
+	InputTxDraw.NInRIn = NInRIn
+	InputTxDraw.NInCmIn = NInCmIn
+	InputTxDraw.NOutCoins = NOutCoins
+	InputTxDraw.NOutEnergy = NOutEnergy
+	InputTxDraw.NOutPkOut = NOutPkOut
+	InputTxDraw.NOutRhoOut = NOutRhoOut
+	InputTxDraw.NOutROut = NOutROut
+	InputTxDraw.NOutCmOut = NOutCmOut
+
+	c, _ := InputTxDraw.BuildWitness()
+
+	w, _ := frontend.NewWitness(c, ecc.BW6_761.ScalarField())
+
+	// 4) Generate proof
+	_ = time.Now()
+	proof, err := groth16.Prove(globalCCSDraw, globalPKDraw, w)
+	if err != nil {
+		panic(err)
+	}
+
+	var buf bytes.Buffer
+	proof.WriteTo(&buf)
+
+	fmt.Println("proof: ", buf.Bytes())
+
+	return nil
+
+}
+
+// NodeNotes regroupe les données générées pour un nœud
+type NodeNotes struct {
+	SkBase []byte
+	PkBase []byte
+	NBase  zg.Note
+
+	SkIn []byte
+	PkIn []byte
+	NIn  zg.Note
+
+	SkOut []byte
+	PkOut []byte
+	Bid   *big.Int
+}
+
+func createNodeNotes(baseCoins, baseEnergy, inCoins, inEnergy, bidValue int64) NodeNotes {
+	var nn NodeNotes
+
+	// Génération de la note de base (nBase)
+	nn.SkBase = GenerateSk()
+	nn.PkBase = GeneratePk(nn.SkBase)
+	rhoBase := big.NewInt(1111).Bytes()
+	randBase := big.NewInt(2222).Bytes()
+	valueBase := zg.NewGamma(baseCoins, baseEnergy)
+	nn.NBase = GenerateNote(valueBase, nn.PkBase, rhoBase, randBase)
+
+	// Génération de la note d'entrée (nIn)
+	nn.SkIn = GenerateSk()
+	nn.PkIn = GeneratePk(nn.SkIn)
+	rhoIn := big.NewInt(1111).Bytes()
+	randIn := big.NewInt(2222).Bytes()
+	gammaIn := zg.NewGamma(inCoins, inEnergy)
+	nn.NIn = GenerateNote(gammaIn, nn.PkIn, rhoIn, randIn)
+
+	// Génération de la clé pour la transaction de sortie et le bid
+	nn.SkOut = GenerateSk()
+	nn.PkOut = GeneratePk(nn.SkOut)
+	nn.Bid = big.NewInt(int64(bidValue))
+
+	return nn
 }
