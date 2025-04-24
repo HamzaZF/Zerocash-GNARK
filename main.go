@@ -3741,13 +3741,21 @@ func main() {
 		nodes[i].DiffieHellmanKeyExchange(nodes[0].Address)
 	}
 
-	max := 4
+	//return
+
+	max := n - 1 //4
 	//time.Sleep(1 * time.Second)
+	fmt.Println("Waiting for all nodes to finish DH exchanges...")
 	for {
 		if len(nodes[1].DHExchanges) == max && len(nodes[2].DHExchanges) == max && len(nodes[3].DHExchanges) == max {
 			break
 		}
+		fmt.Println("len(nodes[1].DHExchanges)=", len(nodes[1].DHExchanges))
+		fmt.Println("len(nodes[2].DHExchanges)=", len(nodes[2].DHExchanges))
+		fmt.Println("len(nodes[3].DHExchanges)=", len(nodes[3].DHExchanges))
+		time.Sleep(1 * time.Second)
 	}
+	fmt.Println("All nodes finished DH exchanges.")
 
 	// node1Notes := createNodeNotes(13, 2, 13, 2, 13)
 	// node2Notes := createNodeNotes(15, 1, 15, 1, 15)
